@@ -3,16 +3,38 @@ import time
 import shutil
 import subprocess
 import logging
+import json
+import uuid
+import hashlib
 from datetime import datetime
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-from utils import load_config, get_cost_estimate
-from prompts import SYSTEM_PROMPT
+from .utils import load_config, get_cost_estimate
+from .prompts import SYSTEM_PROMPT
 
-logger = logging.getLogger("AIVoice")
+logger = logging.getLogger("Amanu")
 
-class AudioProcessor:
+class AudioHandler(FileSystemEventHandler):
+    def __init__(self, scribe):
+        self.scribe = scribe
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        
+        filename = event.src_path
+        if filename.lower().endswith('.mp3'):
+            # Convert to absolute path
+            filepath = os.path.abspath(filename)
+            logger.info(f"New file detected: {filepath}")
+            # Small delay to ensure file write is complete
+            time.sleep(2) 
+            self.scribe.process_file(filepath)
+
+class Scribe:
     def __init__(self, config):
         self.config = config
         self.setup_gemini()
@@ -28,6 +50,44 @@ class AudioProcessor:
             model_name=self.config['gemini']['model'],
             system_instruction=SYSTEM_PROMPT
         )
+
+    def watch(self):
+        """Starts the daemon to watch for new files."""
+        input_dir = self.config['paths']['input']
+        os.makedirs(input_dir, exist_ok=True)
+        
+        event_handler = AudioHandler(self)
+        observer = Observer()
+        observer.schedule(event_handler, input_dir, recursive=False)
+        observer.start()
+        
+        logger.info(f"Scribe is listening in {input_dir}...")
+        logger.info("Press Ctrl+C to stop.")
+        
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+            logger.info("Stopping Scribe...")
+        
+        observer.join()
+
+    def process_all(self):
+        """Processes all existing files in the input directory."""
+        input_dir = self.config['paths']['input']
+        os.makedirs(input_dir, exist_ok=True)
+        
+        logger.info(f"Scanning {input_dir} for files...")
+        files = [f for f in os.listdir(input_dir) if f.lower().endswith('.mp3')]
+        
+        if not files:
+            logger.info("No files found to process.")
+            return
+
+        for filename in files:
+            filepath = os.path.join(input_dir, filename)
+            self.process_file(filepath)
 
     def process_file(self, filepath):
         if filepath in self.processing_files:
@@ -162,9 +222,10 @@ class AudioProcessor:
         
         year = now.strftime("%Y")
         month = now.strftime("%m")
+        day = now.strftime("%d")
         
         results_dir = self.config['paths']['results']
-        target_dir = os.path.join(results_dir, year, month, folder_name)
+        target_dir = os.path.join(results_dir, year, month, day, folder_name)
         os.makedirs(target_dir, exist_ok=True)
         
         # Save compressed audio
@@ -175,49 +236,62 @@ class AudioProcessor:
         
         parts = text_content.split("---SPLIT_OUTPUT_HERE---")
         
-        raw_transcript = ""
-        structured_content = ""
+        raw_json_str = ""
+        clean_markdown = ""
         
         if len(parts) >= 2:
-            raw_transcript = parts[0].strip()
-            structured_content = parts[1].strip()
+            raw_json_str = parts[0].strip()
+            clean_markdown = parts[1].strip()
         else:
-            logger.warning("Could not split response into two parts. Saving all to both files.")
-            raw_transcript = text_content
-            structured_content = text_content
+            logger.warning("Could not split response into two parts. Saving all to clean transcript.")
+            clean_markdown = text_content
 
-        # Add metadata to structured content
+        # Save Raw Transcript (JSON)
+        raw_data = []
+        try:
+            # Clean up potential markdown code blocks if the model ignored instructions
+            cleaned_json_str = raw_json_str.replace("```json", "").replace("```", "").strip()
+            if cleaned_json_str:
+                raw_data = json.loads(cleaned_json_str)
+            
+            with open(os.path.join(target_dir, "transcript_raw.json"), "w") as f:
+                json.dump(raw_data, f, indent=2, ensure_ascii=False)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse raw transcript JSON: {e}")
+            # Fallback: Save the raw string to a text file for debugging
+            with open(os.path.join(target_dir, "transcript_raw_error.txt"), "w") as f:
+                f.write(raw_json_str)
+
+        # Add metadata to clean transcript
         meta_header = f"**Original File Date:** {creation_date_str}\n**Processed Date:** {now.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        structured_content = meta_header + structured_content
+        final_clean_content = meta_header + clean_markdown
 
-        # Save Raw Transcript
-        with open(os.path.join(target_dir, "raw_transcript.md"), "w") as f:
-            f.write(raw_transcript)
-
-        # Save Structured Content
-        with open(os.path.join(target_dir, "structured.md"), "w") as f:
-            f.write(structured_content)
+        # Save Clean Transcript (Markdown)
+        with open(os.path.join(target_dir, "transcript_clean.md"), "w") as f:
+            f.write(final_clean_content)
             
         # Calculate stats
         end_time = time.time()
         duration = end_time - start_time
         input_tokens = response.usage_metadata.prompt_token_count
         output_tokens = response.usage_metadata.candidates_token_count
-        cost = get_cost_estimate(input_tokens, output_tokens)
+        input_rate = self.config.get('pricing', {}).get('input_per_1m', 0.075)
+        output_rate = self.config.get('pricing', {}).get('output_per_1m', 0.30)
+        cost = get_cost_estimate(input_tokens, output_tokens, input_rate, output_rate)
         
-        log_content = (
-            f"Processing Log for {filename}\n"
-            f"Original Date: {creation_date_str}\n"
-            f"Processed Date: {now.isoformat()}\n"
-            f"Duration: {duration:.2f} seconds\n"
-            f"Input Tokens: {input_tokens}\n"
-            f"Output Tokens: {output_tokens}\n"
-            f"Estimated Cost: {cost}\n"
+        # Generate and save metadata
+        self.save_metadata(
+            target_dir, 
+            original_path, 
+            compressed_path, 
+            start_time, 
+            duration, 
+            input_tokens, 
+            output_tokens, 
+            cost,
+            self.config['gemini']['model']
         )
         
-        with open(os.path.join(target_dir, "session.log"), "w") as f:
-            f.write(log_content)
-            
         # Print to console
         print("\n" + "="*30)
         print(f"DONE: {filename}")
@@ -226,6 +300,58 @@ class AudioProcessor:
         print(f"Tokens: {input_tokens} in / {output_tokens} out")
         print(f"Cost: {cost}")
         print("="*30 + "\n")
+
+    def save_metadata(self, target_dir, original_path, compressed_path, start_time, process_duration, input_tokens, output_tokens, cost, model_name):
+        meta = {
+            "id": str(uuid.uuid4()),
+            "file": {
+                "original_name": os.path.basename(original_path),
+                "created_at": datetime.fromtimestamp(os.path.getctime(original_path)).isoformat(),
+                "size_bytes": os.path.getsize(original_path),
+                "checksum_sha256": self.calculate_checksum(compressed_path),
+                "duration_seconds": self.get_audio_duration(compressed_path)
+            },
+            "processing": {
+                "timestamp_start": datetime.fromtimestamp(start_time).isoformat(),
+                "duration_seconds": round(process_duration, 2),
+                "model": model_name,
+                "tokens": {
+                    "input": input_tokens,
+                    "output": output_tokens
+                },
+                "cost_usd": cost
+            },
+            "content": {
+                "language": "auto", 
+                "device_id": None,
+                "source": None
+            }
+        }
+        
+        with open(os.path.join(target_dir, "meta.json"), "w") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+
+    def calculate_checksum(self, filepath):
+        sha256_hash = hashlib.sha256()
+        with open(filepath, "rb") as f:
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+
+    def get_audio_duration(self, filepath):
+        try:
+            cmd = [
+                'ffprobe', 
+                '-v', 'error', 
+                '-show_entries', 'format=duration', 
+                '-of', 'default=noprint_wrappers=1:nokey=1', 
+                filepath
+            ]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return float(result.stdout.strip())
+        except Exception as e:
+            logger.warning(f"Failed to get audio duration: {e}")
+            return 0.0
 
     def cleanup(self, original_path, compressed_path, gemini_file):
         # Move original to processed (optional, or delete)
