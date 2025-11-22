@@ -1,0 +1,19 @@
+paths:
+  input: "./input"
+  results: "./results"
+  quarantine: "./quarantine"
+
+gemini:
+  api_key: "YOUR_KEY_HERE"
+  model: "gemini-2.0-flash"
+
+audio:
+  format: "ogg"
+  bitrate: "24k"
+
+daemon:
+  poll_interval: 5
+
+pricing:
+  input_per_1m: 0.075
+  output_per_1m: 0.30
