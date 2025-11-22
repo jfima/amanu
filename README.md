@@ -57,6 +57,45 @@ Before installing, ensure you have the following:
     *(Or keep `amanu watch` running in the background)*
 4.  **Result**: Amanu processes the file and saves the results in `results/`.
 
+## Advanced Usage
+
+### 1. Templates
+Control the format of the `transcript_clean.md` output using the `--template` argument.
+
+-   **Default**: Detailed structured note.
+    ```bash
+    amanu run
+    ```
+-   **Summary**: Concise executive summary.
+    ```bash
+    amanu run --template summary
+    ```
+-   **Custom**: Create your own `.md` file in `amanu/templates/` or `~/.config/amanu/templates/` and reference it by name.
+    ```bash
+    amanu run --template my-custom-template
+    ```
+
+### 2. Flexible Inputs
+You don't need to rely on the config folder. You can process specific files or directories directly:
+```bash
+amanu run ./my-folder
+amanu run interview.mp3
+```
+
+### 3. Dry Run
+Simulate processing without making API calls or spending money. Useful for testing configuration.
+```bash
+amanu run --dry-run
+```
+
+### 4. Configuration Hierarchy
+Amanu loads configuration in the following order (highest priority first):
+1.  **Command Line Arguments** (e.g., `--template`, `path`)
+2.  **Environment Variables** (`AMANU_CONFIG`, `GEMINI_API_KEY`)
+3.  **Local Config** (`./config.yaml`)
+4.  **User Config** (`~/.config/amanu/config.yaml`)
+5.  **Defaults**
+
 ## Output Structure
 
 For every processed file, Amanu creates a dedicated folder organized by date:
