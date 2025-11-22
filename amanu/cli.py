@@ -11,6 +11,7 @@ def main():
     parent_parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
     parent_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output (errors only).")
     parent_parser.add_argument("--dry-run", action="store_true", help="Simulate processing without making API calls.")
+    parent_parser.add_argument("--template", default="default", help="Output template name (default: 'default').")
 
     # Main parser
     parser = argparse.ArgumentParser(description="Amanu - AI-powered amanuensis for your voice notes.")
@@ -45,7 +46,7 @@ def main():
         sys.exit(1)
 
     # Initialize Scribe
-    scribe = Scribe(config, dry_run=args.dry_run)
+    scribe = Scribe(config, dry_run=args.dry_run, template_name=args.template)
 
     if args.command == "watch":
         logger.info("Starting Amanu in WATCH mode...")

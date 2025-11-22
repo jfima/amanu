@@ -13,7 +13,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .utils import load_config, get_cost_estimate
-from .prompts import SYSTEM_PROMPT
+from .prompts import get_system_prompt
 
 logger = logging.getLogger("Amanu")
 
@@ -35,9 +35,10 @@ class AudioHandler(FileSystemEventHandler):
             self.scribe.process_file(filepath)
 
 class Scribe:
-    def __init__(self, config, dry_run=False):
+    def __init__(self, config, dry_run=False, template_name="default"):
         self.config = config
         self.dry_run = dry_run
+        self.template_name = template_name
         self.setup_gemini()
         self.processing_files = set()
 
@@ -47,9 +48,18 @@ class Scribe:
              logger.warning("Gemini API Key not found in env or config. Please set it.")
         genai.configure(api_key=api_key)
         
+        try:
+            system_instruction = get_system_prompt(self.template_name)
+        except FileNotFoundError as e:
+            logger.error(f"Template error: {e}")
+            # Fallback to default or exit? 
+            # For robustness, let's try default, if that fails, we crash.
+            logger.warning("Falling back to 'default' template.")
+            system_instruction = get_system_prompt("default")
+
         self.model = genai.GenerativeModel(
             model_name=self.config['gemini']['model'],
-            system_instruction=SYSTEM_PROMPT
+            system_instruction=system_instruction
         )
 
     def watch(self, input_path=None):
@@ -111,6 +121,7 @@ class Scribe:
         start_time = time.time()
         filename = os.path.basename(filepath)
         logger.info(f"Starting processing for: {filename}")
+        logger.info(f"Using template: {self.template_name}")
 
         if self.dry_run:
             logger.info(f"[DRY RUN] Would process {filename}")
