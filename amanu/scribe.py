@@ -35,8 +35,9 @@ class AudioHandler(FileSystemEventHandler):
             self.scribe.process_file(filepath)
 
 class Scribe:
-    def __init__(self, config):
+    def __init__(self, config, dry_run=False):
         self.config = config
+        self.dry_run = dry_run
         self.setup_gemini()
         self.processing_files = set()
 
@@ -51,9 +52,9 @@ class Scribe:
             system_instruction=SYSTEM_PROMPT
         )
 
-    def watch(self):
+    def watch(self, input_path=None):
         """Starts the daemon to watch for new files."""
-        input_dir = self.config['paths']['input']
+        input_dir = input_path or self.config['paths']['input']
         os.makedirs(input_dir, exist_ok=True)
         
         event_handler = AudioHandler(self)
@@ -62,6 +63,8 @@ class Scribe:
         observer.start()
         
         logger.info(f"Scribe is listening in {input_dir}...")
+        if self.dry_run:
+            logger.info("DRY RUN MODE: No API calls will be made.")
         logger.info("Press Ctrl+C to stop.")
         
         try:
@@ -73,12 +76,15 @@ class Scribe:
         
         observer.join()
 
-    def process_all(self):
+    def process_all(self, input_path=None):
         """Processes all existing files in the input directory."""
-        input_dir = self.config['paths']['input']
+        input_dir = input_path or self.config['paths']['input']
         os.makedirs(input_dir, exist_ok=True)
         
         logger.info(f"Scanning {input_dir} for files...")
+        if self.dry_run:
+            logger.info("DRY RUN MODE: No API calls will be made.")
+
         files = [f for f in os.listdir(input_dir) if f.lower().endswith('.mp3')]
         
         if not files:
@@ -105,6 +111,12 @@ class Scribe:
         start_time = time.time()
         filename = os.path.basename(filepath)
         logger.info(f"Starting processing for: {filename}")
+
+        if self.dry_run:
+            logger.info(f"[DRY RUN] Would process {filename}")
+            logger.info(f"[DRY RUN] Would compress -> upload -> generate -> save")
+            self.processing_files.remove(filepath)
+            return
 
         try:
             # 1. Compress Audio
