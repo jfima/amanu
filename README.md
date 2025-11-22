@@ -19,13 +19,13 @@ Before installing, ensure you have the following:
     - **Ubuntu/Debian**: `sudo apt install ffmpeg`
     - **macOS**: `brew install ffmpeg`
     - **Windows**: [Download FFmpeg](https://ffmpeg.org/download.html) and add it to your PATH.
-3.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/).
+3.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/api-keys).
 
 ## Installation
 
 1.  **Clone the repository**:
     ```bash
-    git clone <your-repo-url>
+    git clone https://github.com/jfima/amanu
     cd amanu
     ```
 
