@@ -1,0 +1,8 @@
+config.yaml
+input/
+results/
+quarantine/
+__pycache__/
+*.pyc
+.DS_Store
+test_audio.mp3
