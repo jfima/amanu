@@ -1,12 +1,9 @@
-import os
 import time
-import shutil
 import subprocess
 import logging
-import json
-import uuid
-import hashlib
+from pathlib import Path
 from datetime import datetime
+from typing import Dict, Any, Optional, Set
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import google.generativeai as genai
@@ -14,46 +11,72 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .utils import load_config, get_cost_estimate
 from .prompts import get_system_prompt
+from .constants import (
+    GEMINI_PROCESSING_POLL_INTERVAL,
+    DEFAULT_SAMPLE_RATE,
+    DEFAULT_CHANNELS,
+    MP3_EXTENSION,
+)
+from .file_manager import FileManager
+from .response_parser import ResponseParser
+from .results_manager import ResultsManager
+from .models import AudioFile, ProcessingMetrics
 
 logger = logging.getLogger("Amanu")
 
+
 class AudioHandler(FileSystemEventHandler):
-    def __init__(self, scribe):
+    """Handles file system events for audio files."""
+    
+    def __init__(self, scribe: 'Scribe'):
         self.scribe = scribe
 
     def on_created(self, event):
         if event.is_directory:
             return
         
-        filename = event.src_path
-        if filename.lower().endswith('.mp3'):
-            # Convert to absolute path
-            filepath = os.path.abspath(filename)
+        filepath = Path(event.src_path).resolve()
+        if filepath.suffix.lower() == MP3_EXTENSION:
             logger.info(f"New file detected: {filepath}")
             # Small delay to ensure file write is complete
-            time.sleep(2) 
+            time.sleep(2)
             self.scribe.process_file(filepath)
 
+
 class Scribe:
-    def __init__(self, config, dry_run=False, template_name="default"):
+    """Main orchestrator for audio transcription processing."""
+    
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        dry_run: bool = False,
+        template_name: str = "default"
+    ):
         self.config = config
         self.dry_run = dry_run
         self.template_name = template_name
+        self.processing_files: Set[Path] = set()
+        
+        # Initialize managers
+        self.file_manager = FileManager()
+        self.results_manager = ResultsManager(Path(config['paths']['results']))
+        self.response_parser = ResponseParser()
+        
+        # Setup Gemini
         self.setup_gemini()
-        self.processing_files = set()
 
-    def setup_gemini(self):
+    def setup_gemini(self) -> None:
+        """Configure Gemini API client."""
+        import os
         api_key = os.getenv("GEMINI_API_KEY") or self.config['gemini']['api_key']
         if not api_key or api_key == "YOUR_KEY_HERE":
-             logger.warning("Gemini API Key not found in env or config. Please set it.")
+            logger.warning("Gemini API Key not found in env or config. Please set it.")
         genai.configure(api_key=api_key)
         
         try:
             system_instruction = get_system_prompt(self.template_name)
         except FileNotFoundError as e:
             logger.error(f"Template error: {e}")
-            # Fallback to default or exit? 
-            # For robustness, let's try default, if that fails, we crash.
             logger.warning("Falling back to 'default' template.")
             system_instruction = get_system_prompt("default")
 
@@ -62,14 +85,14 @@ class Scribe:
             system_instruction=system_instruction
         )
 
-    def watch(self, input_path=None):
-        """Starts the daemon to watch for new files."""
-        input_dir = input_path or self.config['paths']['input']
-        os.makedirs(input_dir, exist_ok=True)
+    def watch(self, input_path: Optional[str] = None) -> None:
+        """Start daemon to watch for new files."""
+        input_dir = Path(input_path) if input_path else Path(self.config['paths']['input'])
+        input_dir.mkdir(parents=True, exist_ok=True)
         
         event_handler = AudioHandler(self)
         observer = Observer()
-        observer.schedule(event_handler, input_dir, recursive=False)
+        observer.schedule(event_handler, str(input_dir), recursive=False)
         observer.start()
         
         logger.info(f"Scribe is listening in {input_dir}...")
@@ -86,45 +109,46 @@ class Scribe:
         
         observer.join()
 
-    def process_all(self, input_path=None):
-        """Processes all existing files in the input directory."""
-        input_dir = input_path or self.config['paths']['input']
-        os.makedirs(input_dir, exist_ok=True)
+    def process_all(self, input_path: Optional[str] = None) -> None:
+        """Process all existing files in the input directory."""
+        input_dir = Path(input_path) if input_path else Path(self.config['paths']['input'])
+        input_dir.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"Scanning {input_dir} for files...")
         if self.dry_run:
             logger.info("DRY RUN MODE: No API calls will be made.")
 
-        files = [f for f in os.listdir(input_dir) if f.lower().endswith('.mp3')]
+        files = list(input_dir.glob(f"*{MP3_EXTENSION}"))
         
         if not files:
             logger.info("No files found to process.")
             return
 
-        for filename in files:
-            filepath = os.path.join(input_dir, filename)
+        for filepath in files:
             self.process_file(filepath)
 
-    def process_file(self, filepath):
+    def process_file(self, filepath: Path) -> None:
+        """Process a single audio file."""
+        filepath = filepath.resolve()
+        
         if filepath in self.processing_files:
-            logger.info(f"Skipping {filepath} - already processing.")
+            logger.info(f"Skipping {filepath.name} - already processing.")
             return
         
         self.processing_files.add(filepath)
         
-        # Wait for file to be ready (simple debounce)
-        if not self.wait_for_file(filepath):
+        # Wait for file to be ready
+        if not self.file_manager.wait_for_file(filepath):
             logger.error(f"File {filepath} not found or not ready after waiting.")
             self.processing_files.remove(filepath)
             return
 
         start_time = time.time()
-        filename = os.path.basename(filepath)
-        logger.info(f"Starting processing for: {filename}")
+        logger.info(f"Starting processing for: {filepath.name}")
         logger.info(f"Using template: {self.template_name}")
 
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would process {filename}")
+            logger.info(f"[DRY RUN] Would process {filepath.name}")
             logger.info(f"[DRY RUN] Would compress -> upload -> generate -> save")
             self.processing_files.remove(filepath)
             return
@@ -145,62 +169,53 @@ class Scribe:
             # 5. Cleanup
             self.cleanup(filepath, compressed_path, gemini_file)
             
-            logger.info(f"Successfully processed: {filename}")
+            logger.info(f"Successfully processed: {filepath.name}")
 
         except Exception as e:
-            logger.error(f"Failed to process {filename}: {e}")
+            logger.error(f"Failed to process {filepath.name}: {e}")
             self.handle_failure(filepath)
         finally:
             if filepath in self.processing_files:
                 self.processing_files.remove(filepath)
 
-    def wait_for_file(self, filepath, timeout=10):
-        """Waits for file to exist and size to stabilize."""
-        start = time.time()
-        last_size = -1
-        
-        while time.time() - start < timeout:
-            if os.path.exists(filepath):
-                current_size = os.path.getsize(filepath)
-                if current_size == last_size and current_size > 0:
-                    return True
-                last_size = current_size
-            time.sleep(1)
-        return False
-
-    def compress_audio(self, input_path):
+    def compress_audio(self, input_path: Path) -> Path:
+        """Compress audio file using FFmpeg."""
         logger.info("Compressing audio...")
-        filename = os.path.basename(input_path)
-        name_without_ext = os.path.splitext(filename)[0]
-        output_path = os.path.join(os.path.dirname(input_path), f"{name_without_ext}_compressed.ogg")
+        output_path = input_path.parent / f"{input_path.stem}_compressed.ogg"
         
         bitrate = self.config['audio']['bitrate']
         
         cmd = [
-            'ffmpeg', '-y', # Overwrite
-            '-i', input_path,
+            'ffmpeg', '-y',  # Overwrite
+            '-i', str(input_path),
             '-c:a', 'libopus',
             '-b:a', bitrate,
-            '-ac', '1', # Mono
-            '-ar', '16000', # 16kHz
-            '-vn', # No video
-            output_path
+            '-ac', str(DEFAULT_CHANNELS),  # Mono
+            '-ar', str(DEFAULT_SAMPLE_RATE),  # 16kHz
+            '-vn',  # No video
+            str(output_path)
         ]
         
         try:
-            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
             return output_path
         except subprocess.CalledProcessError as e:
             logger.error(f"FFmpeg compression failed: {e}")
             raise
 
-    def upload_to_gemini(self, filepath):
+    def upload_to_gemini(self, filepath: Path):
+        """Upload file to Gemini and wait for processing."""
         logger.info("Uploading to Gemini...")
-        file = genai.upload_file(filepath, mime_type="audio/ogg")
+        file = genai.upload_file(str(filepath), mime_type="audio/ogg")
         
         # Wait for processing
         while file.state.name == "PROCESSING":
-            time.sleep(2)
+            time.sleep(GEMINI_PROCESSING_POLL_INTERVAL)
             file = genai.get_file(file.name)
             
         if file.state.name == "FAILED":
@@ -209,6 +224,7 @@ class Scribe:
         return file
 
     def generate_content(self, file):
+        """Generate transcription and summary using Gemini."""
         logger.info("Generating transcription and summary...")
         # Safety settings to avoid blocking legitimate content
         safety_settings = {
@@ -224,76 +240,37 @@ class Scribe:
         )
         return response
 
-    def save_results(self, original_path, compressed_path, response, start_time):
+    def save_results(
+        self,
+        original_path: Path,
+        compressed_path: Path,
+        response,
+        start_time: float
+    ) -> None:
+        """Save all processing results."""
         logger.info("Saving results...")
         
-        # Create directory structure
-        now = datetime.now()
-        filename = os.path.basename(original_path)
-        name_without_ext = os.path.splitext(filename)[0]
+        # Create output directory
+        output_dir = self.results_manager.create_output_directory(original_path.name)
         
-        # Get file creation time (metadata)
-        try:
-            creation_time = os.path.getctime(original_path)
-            creation_date_str = datetime.fromtimestamp(creation_time).strftime("%Y-%m-%d %H:%M:%S")
-        except Exception as e:
-            logger.warning(f"Could not get creation time: {e}")
-            creation_date_str = "Unknown"
-
-        timestamp = now.strftime("%H%M%S")
-        folder_name = f"{timestamp}-{name_without_ext}"
-        
-        year = now.strftime("%Y")
-        month = now.strftime("%m")
-        day = now.strftime("%d")
-        
-        results_dir = self.config['paths']['results']
-        target_dir = os.path.join(results_dir, year, month, day, folder_name)
-        os.makedirs(target_dir, exist_ok=True)
+        # Get file metadata
+        creation_date_str = self.file_manager.get_creation_time(original_path)
         
         # Save compressed audio
-        shutil.copy2(compressed_path, os.path.join(target_dir, "compressed.ogg"))
+        self.results_manager.save_compressed_audio(compressed_path, output_dir)
         
-        # Process text content
-        text_content = response.text
+        # Parse response
+        raw_json_str, clean_markdown = self.response_parser.parse_response(response.text)
         
-        parts = text_content.split("---SPLIT_OUTPUT_HERE---")
+        # Save transcripts
+        self.results_manager.save_transcripts(
+            raw_json_str,
+            clean_markdown,
+            output_dir,
+            creation_date_str
+        )
         
-        raw_json_str = ""
-        clean_markdown = ""
-        
-        if len(parts) >= 2:
-            raw_json_str = parts[0].strip()
-            clean_markdown = parts[1].strip()
-        else:
-            logger.warning("Could not split response into two parts. Saving all to clean transcript.")
-            clean_markdown = text_content
-
-        # Save Raw Transcript (JSON)
-        raw_data = []
-        try:
-            # Clean up potential markdown code blocks if the model ignored instructions
-            cleaned_json_str = raw_json_str.replace("```json", "").replace("```", "").strip()
-            if cleaned_json_str:
-                raw_data = json.loads(cleaned_json_str)
-            
-            with open(os.path.join(target_dir, "transcript_raw.json"), "w") as f:
-                json.dump(raw_data, f, indent=2, ensure_ascii=False)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse raw transcript JSON: {e}")
-            # Fallback: Save the raw string to a text file for debugging
-            with open(os.path.join(target_dir, "transcript_raw_error.txt"), "w") as f:
-                f.write(raw_json_str)
-
-        # Add metadata to clean transcript
-        meta_header = f"**Original File Date:** {creation_date_str}\n**Processed Date:** {now.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        final_clean_content = meta_header + clean_markdown
-
-        # Save Clean Transcript (Markdown)
-        with open(os.path.join(target_dir, "transcript_clean.md"), "w") as f:
-            f.write(final_clean_content)
-            
-        # Calculate stats
+        # Calculate metrics
         end_time = time.time()
         duration = end_time - start_time
         input_tokens = response.usage_metadata.prompt_token_count
@@ -302,92 +279,71 @@ class Scribe:
         output_rate = self.config.get('pricing', {}).get('output_per_1m', 0.30)
         cost = get_cost_estimate(input_tokens, output_tokens, input_rate, output_rate)
         
-        # Generate and save metadata
-        self.save_metadata(
-            target_dir, 
-            original_path, 
-            compressed_path, 
-            start_time, 
-            duration, 
-            input_tokens, 
-            output_tokens, 
-            cost,
-            self.config['gemini']['model']
+        # Get audio duration
+        audio_duration = self.get_audio_duration(compressed_path)
+        
+        # Create audio file info
+        audio_file = AudioFile(
+            path=original_path,
+            original_name=original_path.name,
+            created_at=datetime.fromtimestamp(original_path.stat().st_ctime).isoformat(),
+            size_bytes=original_path.stat().st_size,
+            duration_seconds=audio_duration,
+            checksum_sha256=self.file_manager.calculate_checksum(compressed_path)
         )
         
-        # Print to console
-        print("\n" + "="*30)
-        print(f"DONE: {filename}")
-        print(f"Original Date: {creation_date_str}")
-        print(f"Time: {duration:.2f}s")
-        print(f"Tokens: {input_tokens} in / {output_tokens} out")
-        print(f"Cost: {cost}")
-        print("="*30 + "\n")
-
-    def save_metadata(self, target_dir, original_path, compressed_path, start_time, process_duration, input_tokens, output_tokens, cost, model_name):
-        meta = {
-            "id": str(uuid.uuid4()),
-            "file": {
-                "original_name": os.path.basename(original_path),
-                "created_at": datetime.fromtimestamp(os.path.getctime(original_path)).isoformat(),
-                "size_bytes": os.path.getsize(original_path),
-                "checksum_sha256": self.calculate_checksum(compressed_path),
-                "duration_seconds": self.get_audio_duration(compressed_path)
-            },
-            "processing": {
-                "timestamp_start": datetime.fromtimestamp(start_time).isoformat(),
-                "duration_seconds": round(process_duration, 2),
-                "model": model_name,
-                "tokens": {
-                    "input": input_tokens,
-                    "output": output_tokens
-                },
-                "cost_usd": cost
-            },
-            "content": {
-                "language": "auto", 
-                "device_id": None,
-                "source": None
-            }
-        }
+        # Create processing metrics
+        metrics = ProcessingMetrics(
+            timestamp_start=datetime.fromtimestamp(start_time).isoformat(),
+            duration_seconds=round(duration, 2),
+            model=self.config['gemini']['model'],
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost
+        )
         
-        with open(os.path.join(target_dir, "meta.json"), "w") as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
+        # Save metadata
+        self.results_manager.save_metadata(output_dir, audio_file, metrics)
+        
+        # Log completion
+        self.results_manager.log_completion(
+            original_path.name,
+            creation_date_str,
+            duration,
+            input_tokens,
+            output_tokens,
+            cost
+        )
 
-    def calculate_checksum(self, filepath):
-        sha256_hash = hashlib.sha256()
-        with open(filepath, "rb") as f:
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        return sha256_hash.hexdigest()
-
-    def get_audio_duration(self, filepath):
+    def get_audio_duration(self, filepath: Path) -> float:
+        """Get audio file duration using ffprobe."""
         try:
             cmd = [
-                'ffprobe', 
-                '-v', 'error', 
-                '-show_entries', 'format=duration', 
-                '-of', 'default=noprint_wrappers=1:nokey=1', 
-                filepath
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                str(filepath)
             ]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
             return float(result.stdout.strip())
         except Exception as e:
             logger.warning(f"Failed to get audio duration: {e}")
             return 0.0
 
-    def cleanup(self, original_path, compressed_path, gemini_file):
-        # Move original to processed (optional, or delete)
-        # For now, let's just delete the compressed temp file
-        if os.path.exists(compressed_path):
-            os.remove(compressed_path)
-            
-        # Move original file to 'processed' folder inside input or just delete?
-        # Spec says: "Исходный файл перемещается в processed (или удаляется)"
-        # Let's create a 'processed' folder in the input directory
-        processed_dir = os.path.join(os.path.dirname(original_path), "processed")
-        os.makedirs(processed_dir, exist_ok=True)
-        shutil.move(original_path, os.path.join(processed_dir, os.path.basename(original_path)))
+    def cleanup(self, original_path: Path, compressed_path: Path, gemini_file) -> None:
+        """Clean up temporary files and move original to processed."""
+        # Delete compressed temp file
+        if compressed_path.exists():
+            compressed_path.unlink()
+        
+        # Move original file to processed folder
+        self.file_manager.move_to_processed(original_path)
         
         # Delete from Gemini
         try:
@@ -395,11 +351,7 @@ class Scribe:
         except Exception as e:
             logger.warning(f"Failed to delete file from Gemini: {e}")
 
-    def handle_failure(self, filepath):
-        quarantine_dir = self.config['paths']['quarantine']
-        os.makedirs(quarantine_dir, exist_ok=True)
-        try:
-            shutil.move(filepath, os.path.join(quarantine_dir, os.path.basename(filepath)))
-            logger.info(f"Moved {filepath} to quarantine.")
-        except Exception as e:
-            logger.error(f"Failed to move to quarantine: {e}")
+    def handle_failure(self, filepath: Path) -> None:
+        """Handle processing failure by moving file to quarantine."""
+        quarantine_dir = Path(self.config['paths']['quarantine'])
+        self.file_manager.move_to_quarantine(filepath, quarantine_dir)

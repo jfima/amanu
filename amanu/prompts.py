@@ -1,6 +1,9 @@
 import os
+from typing import Optional
 
-BASE_INSTRUCTION = """
+from .constants import RESPONSE_DELIMITER
+
+BASE_INSTRUCTION = f"""
 You are an expert audio analyst and transcriber. Your task is to process the provided audio file and generate two distinct outputs in a single response, separated by a specific delimiter.
 
 **Input:** An audio file (lecture, meeting, or voice note).
@@ -12,7 +15,7 @@ You are an expert audio analyst and transcriber. Your task is to process the pro
 
 **Output Structure:**
 
-You must generate two parts separated by exactly this line: `---SPLIT_OUTPUT_HERE---`
+You must generate two parts separated by exactly this line: `{RESPONSE_DELIMITER}`
 
 ### PART 1: Raw Transcript (JSON)
 - **Format**: A strict JSON array of objects. Do not wrap in markdown code blocks (no ```json ... ```).
@@ -20,8 +23,8 @@ You must generate two parts separated by exactly this line: `---SPLIT_OUTPUT_HER
 - **Schema**:
   ```json
   [
-    {"time": "MM:SS", "speaker": "Speaker Name", "text": "Verbatim text..."},
-    {"time": "MM:SS", "speaker": "Speaker Name", "text": "Verbatim text..."}
+    {{"time": "MM:SS", "speaker": "Speaker Name", "text": "Verbatim text..."}},
+    {{"time": "MM:SS", "speaker": "Speaker Name", "text": "Verbatim text..."}}
   ]
   ```
 - **Rules**:
@@ -29,10 +32,10 @@ You must generate two parts separated by exactly this line: `---SPLIT_OUTPUT_HER
     - `speaker`: Identify speakers (Speaker A, Speaker B, or names if known).
     - `text`: The exact words spoken.
 
-`---SPLIT_OUTPUT_HERE---`
+`{RESPONSE_DELIMITER}`
 """
 
-def load_template(template_name):
+def load_template(template_name: str) -> str:
     """
     Loads a template from:
     1. ./templates/{name}.md
@@ -64,7 +67,7 @@ def load_template(template_name):
     # Fallback if not found
     raise FileNotFoundError(f"Template '{template_name}' not found.")
 
-def get_system_prompt(template_name="default"):
+def get_system_prompt(template_name: str = "default") -> str:
     try:
         template_content = load_template(template_name)
     except FileNotFoundError:

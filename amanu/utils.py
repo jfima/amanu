@@ -2,8 +2,9 @@ import yaml
 import logging
 import os
 import sys
+from typing import Dict, Any, Optional
 
-def load_config(config_path=None):
+def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Loads configuration with hierarchy:
     1. Path provided via argument (if any)
@@ -74,7 +75,7 @@ def load_config(config_path=None):
 
 from logging.handlers import TimedRotatingFileHandler
 
-def setup_logging(log_dir="logs"):
+def setup_logging(log_dir: str = "logs") -> logging.Logger:
     """Configures logging to console and rotating file."""
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "app.log")
@@ -96,7 +97,7 @@ def setup_logging(log_dir="logs"):
         
     return logger
 
-def get_cost_estimate(input_tokens, output_tokens, input_rate=0.075, output_rate=0.30):
+def get_cost_estimate(input_tokens: int, output_tokens: int, input_rate: float = 0.075, output_rate: float = 0.30) -> str:
     """
     Estimates cost for Gemini.
     Pricing rates are per 1M tokens.

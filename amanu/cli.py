@@ -1,10 +1,11 @@
 import argparse
 import sys
 import logging
+from typing import NoReturn
 from .utils import load_config, setup_logging
 from .scribe import Scribe
 
-def main():
+def main() -> None:
     # Parent parser for shared arguments
     parent_parser = argparse.ArgumentParser(add_help=False)
     parent_parser.add_argument("--config", help="Path to configuration file.")
