@@ -2,6 +2,10 @@
 
 **Amanu** (short for Amanuensis) is your trusted AI scribe. It automatically processes voice notes (MP3) into structured, clean markdown transcripts using Google Gemini 2.0 Flash.
 
+![Andrew Taylor Still with his amanuensis, Annie Morris, who is at a typewriter](./amanuensis.png)
+
+*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. The recursive irony: he's drawing his scribe while she records his words — a fitting metaphor for this AI transcription tool.*
+
 ## Features
 - **Automatic Transcription**: Converts audio to text with high accuracy.
 - **Structured Output**: Generates a `transcript_raw.json` (time-aligned) and `transcript_clean.md` (polished read).
