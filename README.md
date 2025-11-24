@@ -7,22 +7,21 @@
 *Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. The recursive irony: he's drawing his scribe while she records his words — a fitting metaphor for this AI transcription tool.*
 
 ## Features
-- **Automatic Transcription**: Converts audio to text with high accuracy.
-- **Structured Output**: Generates a `transcript_raw.json` (time-aligned) and `transcript_clean.md` (polished read).
+- **Unified Pipeline**: Robust state-based processing (Scout -> Prep -> Scribe -> Refine -> Shelve).
+- **Automatic Transcription**: Converts audio to text with high accuracy using Gemini 2.0 Flash.
+- **Structured Output**: Generates `raw.json` (time-aligned) and `clean.md` (polished read).
 - **Smart Summaries**: Includes a TL;DR section for quick insights.
+- **Job Management**: Full control over jobs with retry, cleanup, and status tracking.
 - **Dual Modes**:
-    - `amanu watch`: Runs as a daemon, monitoring a folder for new files.
-    - `amanu run`: Processes all existing files in the folder and exits.
+    - `amanu watch`: Runs as a daemon, monitoring `scribe-in/` for new files.
+    - `amanu run`: Processes specific files manually.
 
 ## Prerequisites
 
-Before installing, ensure you have the following:
-
 1.  **Python 3.9+**: [Download Python](https://www.python.org/downloads/)
-2.  **FFmpeg**: Required for audio compression.
+2.  **FFmpeg**: Required for audio processing.
     - **Ubuntu/Debian**: `sudo apt install ffmpeg`
     - **macOS**: `brew install ffmpeg`
-    - **Windows**: [Download FFmpeg](https://ffmpeg.org/download.html) and add it to your PATH.
 3.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/api-keys).
 
 ## Installation
@@ -37,7 +36,6 @@ Before installing, ensure you have the following:
     ```bash
     pip install -e .
     ```
-    *This installs the `amanu` command globally in your current environment.*
 
 3.  **Configuration**:
     - Copy the example config:
@@ -50,87 +48,63 @@ Before installing, ensure you have the following:
         api_key: "YOUR_KEY_HERE"
       ```
 
-## Quick Start Use Case
+## Quick Start
 
-1.  **Prepare**: You have a voice note named `meeting_notes.mp3`.
-2.  **Action**: Drop the file into the `input/` folder.
-3.  **Run**:
+1.  **Prepare**: You have a voice note named `meeting.mp3`.
+2.  **Action**: Drop the file into the `scribe-in/` folder.
+3.  **Run Watcher**:
     ```bash
-    amanu run
+    amanu watch
     ```
-    *(Or keep `amanu watch` running in the background)*
-4.  **Result**: Amanu processes the file and saves the results in `results/`.
+4.  **Result**: Amanu picks up the file, processes it in `scribe-work/`, and saves the final results in `scribe-out/`.
 
-## Advanced Usage
+## CLI Commands
 
-### 1. Templates
-Control the format of the `transcript_clean.md` output using the `--template` argument.
-
--   **Default**: Detailed structured note.
-    ```bash
-    amanu run
-    ```
--   **Summary**: Concise executive summary.
-    ```bash
-    amanu run --template summary
-    ```
--   **Custom**: Create your own `.md` file in `amanu/templates/` or `~/.config/amanu/templates/` and reference it by name.
-    ```bash
-    amanu run --template my-custom-template
-    ```
-
-### 2. Flexible Inputs
-You don't need to rely on the config folder. You can process specific files or directories directly:
+### Manual Run
+Process a specific file immediately:
 ```bash
-amanu run ./my-folder
-amanu run interview.mp3
+amanu run input/interview.mp3
 ```
+Options:
+- `--template <name>`: Use a specific template (e.g., `summary`).
+- `--dry-run`: Simulate execution without API calls.
+- `--compress` / `--no-compress`: Control audio compression.
 
-### 3. Dry Run
-Simulate processing without making API calls or spending money. Useful for testing configuration.
-```bash
-amanu run --dry-run
-```
+### Job Management
+Amanu tracks every job in `scribe-work/`. You can manage them with:
 
-### 4. Configuration Hierarchy
-Amanu loads configuration in the following order (highest priority first):
-1.  **Command Line Arguments** (e.g., `--template`, `path`)
-2.  **Environment Variables** (`AMANU_CONFIG`, `GEMINI_API_KEY`)
-3.  **Local Config** (`./config.yaml`)
-4.  **User Config** (`~/.config/amanu/config.yaml`)
-5.  **Defaults**
+- **List Jobs**:
+  ```bash
+  amanu jobs list
+  amanu jobs list --status failed
+  ```
+
+- **Show Details**:
+  ```bash
+  amanu jobs show <JOB_ID>
+  ```
+
+- **Retry Failed Job**:
+  ```bash
+  amanu jobs retry <JOB_ID>
+  # Or retry from a specific stage
+  amanu jobs retry <JOB_ID> --from-stage scribe
+  ```
+
+- **Cleanup**:
+  ```bash
+  amanu jobs cleanup --older-than 7
+  ```
 
 ## Output Structure
 
-For every processed file, Amanu creates a dedicated folder organized by date:
-`results/YYYY/MM/DD/<timestamp>-<filename>/`
+Results are organized by date in `scribe-out/`:
+`scribe-out/YYYY/MM/DD/<JOB_ID>/`
 
-Inside this folder, you will find:
-
-### 1. `transcript_clean.md` (The Document)
-This is the human-readable version. It contains:
--   **TL;DR**: A 3-bullet summary of the key points.
--   **Polished Transcript**: The text is cleaned of filler words ("um", "ah") and formatted into paragraphs with bolded speaker names. Perfect for reading or sharing.
-
-### 2. `transcript_raw.json` (The Data)
-This is the machine-readable version. It contains the verbatim transcript with precise timestamps.
-```json
-[
-  {"time": "00:00", "speaker": "Speaker A", "text": "Hello..."},
-  {"time": "00:05", "speaker": "Speaker B", "text": "Hi there..."}
-]
-```
-Useful for subtitles, search, or clicking to seek in a player.
-
-### 3. `meta.json` (The Stats)
-Contains processing metadata:
--   Processing duration.
--   Token usage (Input/Output).
--   Estimated cost.
--   File checksums.
-
-### 4. `compressed.ogg`
-The optimized audio file that was sent to the AI.
+Inside each folder:
+- **`transcripts/clean.md`**: The human-readable document with summary and polished text.
+- **`transcripts/raw.json`**: Verbatim transcript with timestamps and speaker IDs.
+- **`_stages/`**: detailed JSON logs for each pipeline stage (scout, prep, scribe, etc.), including cost and token usage.
 
 ## License
 MIT

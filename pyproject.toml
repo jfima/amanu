@@ -1,6 +1,6 @@
 [project]
 name = "amanu"
-version = "0.1.0"
+version = "0.1.2"
 description = "AI-powered amanuensis for your voice notes. Mp3 to Markdown with structure."
 authors = [
     {name = "User", email = "user@example.com"},

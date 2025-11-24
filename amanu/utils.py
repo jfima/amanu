@@ -75,25 +75,37 @@ def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
 
 from logging.handlers import TimedRotatingFileHandler
 
-def setup_logging(log_dir: str = "logs") -> logging.Logger:
-    """Configures logging to console and rotating file."""
+def setup_logging(log_dir: str = "logs", debug: bool = False) -> logging.Logger:
+    """Configures logging to console and rotating file.
+    
+    Args:
+        log_dir: Directory for log files
+        debug: If True, set logging level to DEBUG, otherwise INFO
+    """
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "app.log")
 
     logger = logging.getLogger("Amanu")
-    logger.setLevel(logging.INFO)
+    log_level = logging.DEBUG if debug else logging.INFO
+    logger.setLevel(log_level)
     
     # Avoid adding handlers multiple times
     if not logger.handlers:
         # Console Handler
         console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
         console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         logger.addHandler(console_handler)
         
         # File Handler (Rotating)
         file_handler = TimedRotatingFileHandler(log_file, when="midnight", interval=1, backupCount=30)
+        file_handler.setLevel(log_level)
         file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         logger.addHandler(file_handler)
+    else:
+        # Update existing handlers if they exist
+        for handler in logger.handlers:
+            handler.setLevel(log_level)
         
     return logger
 

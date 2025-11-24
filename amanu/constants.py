@@ -22,13 +22,11 @@ DEFAULT_BITRATE = "24k"
 DEFAULT_AUDIO_FORMAT = "ogg"
 DEFAULT_AUDIO_CODEC = "libopus"
 
+# File operations
+FILE_WAIT_TIMEOUT = 60  # seconds
+FILE_STABILIZATION_CHECK_INTERVAL = 1  # seconds
+CHECKSUM_BLOCK_SIZE = 4096
+
 # File extensions
 MP3_EXTENSION = ".mp3"
 OGG_EXTENSION = ".ogg"
-
-# Directory names
-PROCESSED_DIR_NAME = "processed"
-QUARANTINE_DIR_NAME = "quarantine"
-
-# Checksum algorithm
-CHECKSUM_BLOCK_SIZE = 4096

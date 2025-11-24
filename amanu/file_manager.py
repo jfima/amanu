@@ -11,8 +11,6 @@ from typing import Optional
 from .constants import (
     FILE_WAIT_TIMEOUT,
     FILE_STABILIZATION_CHECK_INTERVAL,
-    PROCESSED_DIR_NAME,
-    QUARANTINE_DIR_NAME,
     CHECKSUM_BLOCK_SIZE,
 )
 
@@ -62,37 +60,6 @@ class FileManager:
             for byte_block in iter(lambda: f.read(CHECKSUM_BLOCK_SIZE), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
-    
-    @staticmethod
-    def move_to_processed(filepath: Path) -> None:
-        """
-        Move file to processed directory.
-        
-        Args:
-            filepath: Path to the file to move
-        """
-        processed_dir = filepath.parent / PROCESSED_DIR_NAME
-        processed_dir.mkdir(exist_ok=True)
-        destination = processed_dir / filepath.name
-        shutil.move(str(filepath), str(destination))
-        logger.info(f"Moved {filepath.name} to processed directory")
-    
-    @staticmethod
-    def move_to_quarantine(filepath: Path, quarantine_dir: Path) -> None:
-        """
-        Move file to quarantine directory.
-        
-        Args:
-            filepath: Path to the file to move
-            quarantine_dir: Path to the quarantine directory
-        """
-        quarantine_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            destination = quarantine_dir / filepath.name
-            shutil.move(str(filepath), str(destination))
-            logger.info(f"Moved {filepath.name} to quarantine")
-        except Exception as e:
-            logger.error(f"Failed to move to quarantine: {e}")
     
     @staticmethod
     def get_creation_time(filepath: Path) -> str:

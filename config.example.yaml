@@ -1,19 +1,61 @@
-paths:
-  input: "./input"
-  results: "./results"
-  quarantine: "./quarantine"
-
 gemini:
-  api_key: "YOUR_KEY_HERE"
-  model: "gemini-2.0-flash"
+  api_key: ""
+  transcribe_model: "gemini-2.0-flash"
+  refine_model: "gemini-2.0-flash"
 
-audio:
-  format: "ogg"
-  bitrate: "24k"
+processing:
+  template: "default"
+  language: "auto"
+  compression_mode: "compressed"  # Options: original (no compression), compressed (OGG), optimized (OGG + silence removal)
+  debug: false
+  scribe:
+    retry_max: 3
+    retry_delay_seconds: 5
 
-daemon:
-  poll_interval: 5
+paths:
+  input: "./scribe-in"
+  work: "./scribe-work"
+  results: "./scribe-out"
 
-pricing:
-  input_per_1m: 0.075
-  output_per_1m: 0.30
+cleanup:
+  failed_jobs_retention_days: 7
+  completed_jobs_retention_days: 1
+  auto_cleanup_enabled: true
+
+
+gemini_models:
+  - name: "gemini-3-pro-preview"
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 65536
+    cost_per_1M_tokens_usd:
+      input: 2.0
+      output: 12.0
+  - name: "gemini-2.5-pro"
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 65536
+    cost_per_1M_tokens_usd:
+      input: 1.25
+      output: 10.0
+  - name: "gemini-2.5-flash"
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 65536
+    cost_per_1M_tokens_usd:
+      input: 0.30
+      output: 2.50
+  - name: "gemini-2.5-flash-lite"
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 65536
+    cost_per_1M_tokens_usd:
+      input: 0.10
+      output: 0.40
+  - name: "gemini-2.0-flash"
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.10
+      output: 0.40
