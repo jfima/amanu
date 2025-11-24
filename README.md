@@ -1,12 +1,14 @@
-# Amanu: The AI Amanuensis
+# Amanu: The Digital Amanuensis
 
-**Amanu** is an intelligent audio processing engine designed to turn **any media file** into **any content format**. 
+**Amanu** (short for Amanuensis) is your trusted AI scribe. It automatically processes voice media files (MP3, WAV, MP4) into structured, clean markdown transcripts using Google Gemini.
 
-It's not just a transcriber; it's an autonomous agent that listens, understands, and reconstructs your voice notes into structured, professional documents—whether that's a blog post, a video script, or a polished meeting summary.
+In the spirit of the great amanuenses of history, it sits ready to capture your spoken words and commit them to the page. But unlike its human predecessors, this scribe never tires, never misses a word, and types at the speed of light.
+
+Feed it your voice notes, interviews, or ramblings, and watch as it weaves them into structured, clean, and beautifully formatted documents.
 
 ![Andrew Taylor Still with his amanuensis, Annie Morris, who is at a typewriter](./amanuensis.png)
 
-*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. A fitting metaphor for this tool: you speak, it crafts.*
+*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. A fitting metaphor: you speak, it crafts.*
 
 ## 🧠 How It Works
 
