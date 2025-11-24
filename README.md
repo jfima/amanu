@@ -42,10 +42,16 @@
       ```bash
       cp config.example.yaml config.yaml
       ```
-    - Open `config.yaml` and paste your API key:
+    - Open `config.yaml` and configure:
       ```yaml
       gemini:
         api_key: "YOUR_KEY_HERE"
+      
+      processing:
+        debug: true  # Enable DEBUG logging (false for INFO only)
+        template: "default"  # or "summary"
+        language: "auto"  # or specific language like "russian", "english"
+        compression_mode: "compressed"  # original, compressed, or optimized
       ```
 
 ## Quick Start
@@ -60,15 +66,61 @@
 
 ## CLI Commands
 
+### Global Options
+- `-v, --verbose`: Enable verbose (DEBUG) logging, overrides `debug` setting in config.yaml
+
 ### Manual Run
 Process a specific file immediately:
 ```bash
 amanu run input/interview.mp3
 ```
+
 Options:
-- `--template <name>`: Use a specific template (e.g., `summary`).
-- `--dry-run`: Simulate execution without API calls.
-- `--compress` / `--no-compress`: Control audio compression.
+- `--template <name>`: Use a specific template (e.g., `summary`, `default`)
+- `--compression-mode <mode>`: Choose compression strategy:
+  - `original`: No compression (use original file)
+  - `compressed`: Convert to OGG format (default)
+  - `optimized`: OGG + silence removal for cost optimization
+- `--dry-run`: Simulate execution without API calls or file changes
+
+Examples:
+```bash
+# Use summary template with optimized compression
+amanu run meeting.mp3 --template summary --compression-mode optimized
+
+# Dry run to see what would happen
+amanu run interview.mp3 --dry-run
+
+# Enable debug logging
+amanu run -v notes.mp3
+```
+
+### Pipeline Stages
+Run individual stages for fine-grained control:
+
+```bash
+# Start a new job (scout stage)
+amanu scout audio.mp3 --model gemini-2.5-flash --compression-mode compressed
+
+# Prepare audio (compress/chunk)
+amanu prep <JOB_ID>
+
+# Transcribe
+amanu scribe <JOB_ID>
+
+# Refine transcript
+amanu refine <JOB_ID>
+
+# Categorize and shelve
+amanu shelve <JOB_ID>
+```
+
+### Watch Mode
+Monitor a directory for new files and process automatically:
+```bash
+amanu watch
+```
+Files dropped into `scribe-in/` are automatically processed and moved to `scribe-out/`.
 
 ### Job Management
 Amanu tracks every job in `scribe-work/`. You can manage them with:
@@ -77,6 +129,7 @@ Amanu tracks every job in `scribe-work/`. You can manage them with:
   ```bash
   amanu jobs list
   amanu jobs list --status failed
+  amanu jobs list --status completed
   ```
 
 - **Show Details**:
@@ -91,9 +144,20 @@ Amanu tracks every job in `scribe-work/`. You can manage them with:
   amanu jobs retry <JOB_ID> --from-stage scribe
   ```
 
-- **Cleanup**:
+- **Cleanup Old Jobs**:
   ```bash
-  amanu jobs cleanup --older-than 7
+  amanu jobs cleanup --older-than 7 --status failed
+  amanu jobs cleanup --older-than 1 --status completed
+  ```
+
+- **Finalize Job** (move to results):
+  ```bash
+  amanu jobs finalize <JOB_ID>
+  ```
+
+- **Delete Job**:
+  ```bash
+  amanu jobs delete <JOB_ID>
   ```
 
 ## Output Structure
