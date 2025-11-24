@@ -1,174 +1,118 @@
-# Amanu: AI-Powered Amanuensis
+# Amanu: The AI Amanuensis
 
-**Amanu** (short for Amanuensis) is your trusted AI scribe. It automatically processes voice notes (MP3) into structured, clean markdown transcripts using Google Gemini 2.0 Flash.
+**Amanu** is an intelligent audio processing engine designed to turn **any media file** into **any content format**. 
+
+It's not just a transcriber; it's an autonomous agent that listens, understands, and reconstructs your voice notes into structured, professional documents—whether that's a blog post, a video script, or a polished meeting summary.
 
 ![Andrew Taylor Still with his amanuensis, Annie Morris, who is at a typewriter](./amanuensis.png)
 
-*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. The recursive irony: he's drawing his scribe while she records his words — a fitting metaphor for this AI transcription tool.*
+*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. A fitting metaphor for this tool: you speak, it crafts.*
 
-## Features
-- **Unified Pipeline**: Robust state-based processing (Scout -> Prep -> Scribe -> Refine -> Shelve).
-- **Automatic Transcription**: Converts audio to text with high accuracy using Gemini 2.0 Flash.
-- **Structured Output**: Generates `raw.json` (time-aligned) and `clean.md` (polished read).
-- **Smart Summaries**: Includes a TL;DR section for quick insights.
-- **Job Management**: Full control over jobs with retry, cleanup, and status tracking.
-- **Dual Modes**:
-    - `amanu watch`: Runs as a daemon, monitoring `scribe-in/` for new files.
-    - `amanu run`: Processes specific files manually.
+## 🧠 How It Works
 
-## Prerequisites
+Amanu operates as a state-based pipeline, treating your audio processing as a multi-stage "job" rather than a simple script.
 
-1.  **Python 3.9+**: [Download Python](https://www.python.org/downloads/)
-2.  **FFmpeg**: Required for audio processing.
-    - **Ubuntu/Debian**: `sudo apt install ffmpeg`
-    - **macOS**: `brew install ffmpeg`
-3.  **Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/api-keys).
+### The Pipeline
+1.  **Scout**: Analyzes the input file. It checks duration, format, and complexity to decide the best strategy (e.g., "Should I split this?", "Is it too big for one pass?").
+2.  **Prep**: Optimizes the media.
+    *   **Compression**: Converts heavy WAV/MP3 files into highly efficient **OGG Opus (24k bitrate)**. This reduces file size by up to 10x without losing speech clarity, allowing hours of audio to fit into a single API call.
+    *   **Smart Caching**: Instead of re-uploading the same file, Amanu uses **Gemini Context Caching**. It uploads the file once and creates a temporary "cache" in the cloud, making subsequent requests faster and cheaper.
+3.  **Scribe**: The core transcription engine.
+    *   **Speaker Identification**: First, it listens to the whole file to identify speakers and assign consistent names.
+    *   **Streamed Transcription**: It transcribes in chunks using a robust JSONL streaming protocol, ensuring that even if the connection drops, progress is saved.
+4.  **Refine**: Post-processing intelligence. It takes the raw transcript and applies a "Template" (e.g., Summary, Blog Post) to generate the final clean document.
+5.  **Shelve**: Organizes the results into a structured `YYYY/MM/DD` folder hierarchy.
 
-## Installation
+## 🚀 Key Features
 
-1.  **Clone the repository**:
+- **Large File Handling**: By combining **OGG compression** with Gemini's **2-million token context window**, Amanu can process massive files (hours of audio) in a single pass without arbitrary splitting.
+- **Context Caching**: Leverages Google's advanced caching to reduce latency and cost for repeated operations on the same audio.
+- **Daemon Mode**: Run `amanu watch` to turn a folder into a magic portal. Drop a file in, get a markdown file out.
+- **Resilient**: Built-in retry mechanisms for API limits (429 errors) and network glitches.
+
+## 🗺 Roadmap
+
+We are building the ultimate media-to-text engine. Coming soon:
+
+- **Multi-Format Output**:
+    - [ ] **SRT/VTT**: Ready-to-upload subtitles for YouTube/Premiere.
+    - [ ] **DOCX**: Formatted Word documents for corporate use.
+    - [ ] **PDF**: Polished reports.
+- **Multi-API Support**:
+    - [ ] **OpenAI Whisper**: For local or alternative cloud transcription.
+    - [ ] **Anthropic Claude**: For advanced reasoning and summarization.
+- **Content Templates**:
+    - [ ] **Video Script**: Turn a rambling voice note into a structured YouTube script.
+    - [ ] **Blog Post**: Convert a lecture into an SEO-optimized article.
+
+## 🛠 Installation
+
+1.  **Clone & Install**:
     ```bash
     git clone https://github.com/jfima/amanu
     cd amanu
-    ```
-
-2.  **Install the package**:
-    ```bash
     pip install -e .
     ```
 
-3.  **Configuration**:
-    - Copy the example config:
-      ```bash
-      cp config.example.yaml config.yaml
-      ```
-    - Open `config.yaml` and configure:
-      ```yaml
-      gemini:
-        api_key: "YOUR_KEY_HERE"
-      
-      processing:
-        debug: true  # Enable DEBUG logging (false for INFO only)
-        template: "default"  # or "summary"
-        language: "auto"  # or specific language like "russian", "english"
-        compression_mode: "compressed"  # original, compressed, or optimized
-      ```
-
-## Quick Start
-
-1.  **Prepare**: You have a voice note named `meeting.mp3`.
-2.  **Action**: Drop the file into the `scribe-in/` folder.
-3.  **Run Watcher**:
+2.  **Configuration**:
     ```bash
-    amanu watch
+    cp config.example.yaml config.yaml
     ```
-4.  **Result**: Amanu picks up the file, processes it in `scribe-work/`, and saves the final results in `scribe-out/`.
+    Edit `config.yaml`:
+    ```yaml
+    gemini:
+      api_key: "YOUR_KEY_HERE"
+    
+    processing:
+      debug: true         # See exactly what's happening under the hood
+      template: "default" # The blueprint for your output
+    ```
 
-## CLI Commands
+## ⚡ Usage
 
-### Global Options
-- `-v, --verbose`: Enable verbose (DEBUG) logging, overrides `debug` setting in config.yaml
-
-### Manual Run
-Process a specific file immediately:
-```bash
-amanu run input/interview.mp3
-```
-
-Options:
-- `--template <name>`: Use a specific template (e.g., `summary`, `default`)
-- `--compression-mode <mode>`: Choose compression strategy:
-  - `original`: No compression (use original file)
-  - `compressed`: Convert to OGG format (default)
-  - `optimized`: OGG + silence removal for cost optimization
-- `--dry-run`: Simulate execution without API calls or file changes
-
-Examples:
-```bash
-# Use summary template with optimized compression
-amanu run meeting.mp3 --template summary --compression-mode optimized
-
-# Dry run to see what would happen
-amanu run interview.mp3 --dry-run
-
-# Enable debug logging
-amanu run -v notes.mp3
-```
-
-### Pipeline Stages
-Run individual stages for fine-grained control:
-
-```bash
-# Start a new job (scout stage)
-amanu scout audio.mp3 --model gemini-2.5-flash --compression-mode compressed
-
-# Prepare audio (compress/chunk)
-amanu prep <JOB_ID>
-
-# Transcribe
-amanu scribe <JOB_ID>
-
-# Refine transcript
-amanu refine <JOB_ID>
-
-# Categorize and shelve
-amanu shelve <JOB_ID>
-```
-
-### Watch Mode
-Monitor a directory for new files and process automatically:
+### The "Magic Folder" (Watch Mode)
+The easiest way to use Amanu. Just run this in the background:
 ```bash
 amanu watch
 ```
-Files dropped into `scribe-in/` are automatically processed and moved to `scribe-out/`.
+Now, whenever you save a voice note to `scribe-in/`, Amanu wakes up, processes it, and delivers the result to `scribe-out/`.
+
+### Manual Control
+Process a specific file with custom settings:
+
+```bash
+# Standard run
+amanu run interview.mp3
+
+# Generate a summary using the optimized compression strategy
+amanu run meeting.wav --template summary --compression-mode optimized
+
+# See debug logs in real-time
+amanu run -v lecture.m4a
+```
 
 ### Job Management
-Amanu tracks every job in `scribe-work/`. You can manage them with:
-
-- **List Jobs**:
-  ```bash
-  amanu jobs list
-  amanu jobs list --status failed
-  amanu jobs list --status completed
-  ```
-
-- **Show Details**:
-  ```bash
-  amanu jobs show <JOB_ID>
-  ```
-
-- **Retry Failed Job**:
-  ```bash
-  amanu jobs retry <JOB_ID>
-  # Or retry from a specific stage
-  amanu jobs retry <JOB_ID> --from-stage scribe
-  ```
-
-- **Cleanup Old Jobs**:
-  ```bash
-  amanu jobs cleanup --older-than 7 --status failed
-  amanu jobs cleanup --older-than 1 --status completed
-  ```
-
-- **Finalize Job** (move to results):
-  ```bash
-  amanu jobs finalize <JOB_ID>
-  ```
-
-- **Delete Job**:
-  ```bash
-  amanu jobs delete <JOB_ID>
-  ```
+Amanu keeps track of everything.
+```bash
+amanu jobs list              # See what's running or failed
+amanu jobs show <JOB_ID>     # Inspect a specific job
+amanu jobs retry <JOB_ID>    # Resume a failed job exactly where it left off
+```
 
 ## Output Structure
 
-Results are organized by date in `scribe-out/`:
-`scribe-out/YYYY/MM/DD/<JOB_ID>/`
-
-Inside each folder:
-- **`transcripts/clean.md`**: The human-readable document with summary and polished text.
-- **`transcripts/raw.json`**: Verbatim transcript with timestamps and speaker IDs.
-- **`_stages/`**: detailed JSON logs for each pipeline stage (scout, prep, scribe, etc.), including cost and token usage.
+Your data is organized for the long term:
+```text
+scribe-out/
+  └── 2025/
+      └── 11/
+          └── 24/
+              └── JOB_ID/
+                  ├── transcripts/
+                  │   ├── clean.md      # The polished, readable result
+                  │   └── raw.json      # The precise, time-aligned data
+                  └── _stages/          # Detailed logs of every decision made
+```
 
 ## License
 MIT
