@@ -30,6 +30,13 @@ Amanu operates as a state-based pipeline, treating your audio processing as a mu
 - **Daemon Mode**: Run `amanu watch` to turn a folder into a magic portal. Drop a file in, get a markdown file out.
 - **Resilient**: Built-in retry mechanisms for API limits (429 errors) and network glitches.
 
+## 💰 Cost Estimation
+
+Amanu calculates the estimated cost for every job based on the specific pricing of the model used.
+- **Transparent Pricing**: It tracks both input (audio/text) and output (transcription) tokens.
+- **Model Recommendation**: Currently, **Gemini 2.5 Flash** or **Gemini 2.0 Flash** offer the best balance of speed, accuracy, and cost efficiency for this pipeline.
+- **Detailed Logs**: Check `_stages/scribe.json` in the output folder for a precise breakdown of token usage and cost per step.
+
 ## 🗺 Roadmap
 
 We are building the ultimate media-to-text engine. Coming soon:
