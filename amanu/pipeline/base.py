@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List # Keep List if used, otherwise remove
 import logging
 
 from ..core.manager import JobManager
@@ -39,6 +39,10 @@ class BaseStage(ABC):
             
         except Exception as e:
             logger.error(f"Stage {self.stage_name.value} failed for job {job_id}: {e}")
+            # Log traceback if debug is enabled for the job
+            if meta.configuration.debug:
+                import traceback
+                logger.debug("""%s""", traceback.format_exc())
             self.manager.update_stage_status(job_id, self.stage_name, StageStatus.FAILED, error=str(e))
             raise
 
@@ -71,13 +75,14 @@ class BaseStage(ABC):
         import google.generativeai as genai
         
         api_key = os.environ.get("GEMINI_API_KEY")
+        
         if not api_key:
              from ..core.config import load_config
              load_config() 
              api_key = os.environ.get("GEMINI_API_KEY")
              
         if not api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment or config.yaml")
+            raise ValueError("GEMINI_API_KEY is missing. Please set it in config.yaml (gemini.api_key) or as an environment variable.")
             
         try:
             genai.configure(api_key=api_key)
@@ -90,18 +95,14 @@ class BaseStage(ABC):
             error_msg = str(e)
             clean_msg = error_msg
             
-            if "API key not valid" in error_msg:
-                clean_msg = "The provided Gemini API key is invalid."
-            elif "400" in error_msg and "API key" in error_msg:
-                 clean_msg = "The provided Gemini API key is invalid."
+            if "API key not valid" in error_msg or "400" in error_msg:
+                clean_msg = "The provided Gemini API key is invalid. Please check your configuration."
             else:
                 # Try to clean up gRPC errors
                 if "[" in clean_msg:
                     clean_msg = clean_msg.split("[")[0].strip()
             
-            raise ValueError(f"{clean_msg} Please check your config.yaml or GEMINI_API_KEY environment variable.")
-
-            raise ValueError(f"{clean_msg} Please check your config.yaml or GEMINI_API_KEY environment variable.")
+            raise ValueError(f"{clean_msg}")
 
 
 class Pipeline:
@@ -111,34 +112,61 @@ class Pipeline:
         self.job_manager = job_manager
         self.results_dir = results_dir
         
-    def run_all_stages(self, job_id: str) -> None:
+    def run_all_stages(self, job_id: str, skip_transcript: bool = False) -> None:
         """Run all stages in sequence."""
-        from .scout import ScoutStage
-        from .prep import PrepStage
+        from .ingest import IngestStage
         from .scribe import ScribeStage
         from .refine import RefineStage
+        from .generate import GenerateStage
         from .shelve import ShelveStage
         
-        logger.info(f"Starting pipeline for job {job_id}")
+        logger.info(f"Starting pipeline for job {job_id} (Skip Transcript: {skip_transcript})")
+
+        stage_order = [
+            StageName.INGEST,
+            StageName.SCRIBE,
+            StageName.REFINE,
+            StageName.GENERATE,
+            StageName.SHELVE,
+        ]
         
-        # 1. Scout
-        ScoutStage(self.job_manager).run(job_id)
-        
-        # 2. Prep
-        PrepStage(self.job_manager).run(job_id)
-        
-        # 3. Scribe
-        ScribeStage(self.job_manager).run(job_id)
-        
-        # 4. Refine
-        RefineStage(self.job_manager).run(job_id)
-        
-        # 5. Shelve (Optional)
-        try:
-            ShelveStage(self.job_manager).run(job_id)
-        except Exception as e:
-            logger.warning(f"Shelve stage failed (non-critical): {e}")
-            
+        # Map StageName to actual Stage classes
+        stage_class_map = {
+            StageName.INGEST: IngestStage,
+            StageName.SCRIBE: ScribeStage,
+            StageName.REFINE: RefineStage,
+            StageName.GENERATE: GenerateStage,
+            StageName.SHELVE: ShelveStage,
+        }
+
+        for current_stage_name in stage_order:
+            try:
+                # Reload state in each iteration to get the latest status updates
+                job_state = self.job_manager.load_state(job_id)
+                current_stage_status = job_state.stages[current_stage_name].status
+
+                if current_stage_status == StageStatus.COMPLETED:
+                    logger.info(f"Stage {current_stage_name.value} already completed. Skipping.")
+                    continue
+
+                if current_stage_name == StageName.SCRIBE and skip_transcript:
+                    logger.info("Skipping Scribe stage (Direct Analysis Mode) as requested.")
+                    self.job_manager.update_stage_status(job_id, StageName.SCRIBE, StageStatus.SKIPPED)
+                    continue
+                
+                if current_stage_status == StageStatus.SKIPPED:
+                     logger.info(f"Stage {current_stage_name.value} was previously skipped. Skipping.")
+                     continue
+
+                # If pending or failed, run the stage
+                logger.info(f"Running stage {current_stage_name.value}...")
+                stage_instance = stage_class_map[current_stage_name](self.job_manager)
+                stage_instance.run(job_id)
+            except Exception as e:
+                import traceback
+                logger.error(f"Pipeline failed at stage {current_stage_name.value}: {e}\n{traceback.format_exc()}")
+                raise
+
         # 6. Finalize
         result_path = self.job_manager.finalize_job(job_id, self.results_dir)
         logger.info(f"Pipeline completed! Results at: {result_path}")

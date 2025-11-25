@@ -13,8 +13,15 @@ DEFAULT_CONFIG = {
     },
     "processing": {
         "context_window": 65000,
-        "template": "default",
         "language": "auto"
+    },
+    "shelve": {
+        "enabled": True,
+        "strategy": "timeline",
+        "zettelkasten": {
+            "id_format": "%Y%m%d%H%M",
+            "filename_pattern": "{id} {slug}.md"
+        }
     },
     "pricing": {
         "transcribe_model": {"input": 0.075, "output": 0.30},
@@ -114,17 +121,49 @@ def load_config(config_path: str = None) -> ConfigContext:
              raise ValueError("No models defined in gemini_models.")
 
     # Load scribe config
-    from .models import ScribeConfig
+    from .models import ScribeConfig, OutputConfig, ArtifactConfig, ShelveConfig, ZettelkastenConfig
     scribe_config_dict = config["processing"].get("scribe", {})
     scribe_config = ScribeConfig(
         retry_max=scribe_config_dict.get("retry_max", 3),
         retry_delay_seconds=scribe_config_dict.get("retry_delay_seconds", 5)
     )
+
+    # Load output config
+    output_config_dict = config["processing"].get("output", {})
+    artifacts = []
+    for artifact_dict in output_config_dict.get("artifacts", []):
+        artifacts.append(ArtifactConfig(**artifact_dict))
+    output_config = OutputConfig(artifacts=artifacts)
+
+    # Load shelve config
+    shelve_config_dict = config.get("shelve", {}) # Top level or inside processing? Spec says 'shelve' at root level in yaml example section 4.1
+    # But usually config is structured. Spec section 4.1 shows:
+    # shelve:
+    #   enabled: true
+    # ...
+    # Let's check DEFAULT_CONFIG if I added it? No I didn't add it to DEFAULT_CONFIG yet.
+    
+    # If users put it in 'shelve' top-level, we should read from config['shelve'].
+    # If they put it in 'processing', we should read from there.
+    # Let's support root level 'shelve' as per spec 4.1.
+    
+    shelve_dict = config.get("shelve", {})
+    zettelkasten_dict = shelve_dict.get("zettelkasten", {})
+    zettelkasten_config = ZettelkastenConfig(**zettelkasten_dict)
+    
+    shelve_config = ShelveConfig(
+        enabled=shelve_dict.get("enabled", True),
+        root_path=shelve_dict.get("root_path"),
+        strategy=shelve_dict.get("strategy", "timeline"),
+        zettelkasten=zettelkasten_config
+    )
     
     defaults = JobConfiguration(
-        template=config["processing"]["template"],
+        # template=config["processing"]["template"], # Deprecated
         language=config["processing"]["language"],
-        compression_enabled=config["processing"].get("compression_enabled", False),
+        compression_mode=config["processing"].get("compression_mode", "compressed"),
+        shelve=shelve_config,
+        output=output_config,
         debug=config["processing"].get("debug", False),
         scribe=scribe_config,
         transcribe=transcribe_spec,

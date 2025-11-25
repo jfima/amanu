@@ -24,10 +24,12 @@ class ScribeStage(BaseStage):
         # Configure Gemini
         self._configure_gemini(meta.configuration.transcribe.name)
         
-        # Load prep result
-        prep_result = self._load_prep_result(job_dir)
-        cache_name = prep_result.get("cache_name")
-        file_name = prep_result.get("file_name")
+        # Load ingest result
+        ingest_result = self._load_ingest_result(job_dir)
+        gemini_data = ingest_result.get("gemini", {})
+        cache_name = gemini_data.get("cache_name")
+        file_uri = gemini_data.get("file_uri")
+        file_name = gemini_data.get("file_name")
         
         transcripts_dir = job_dir / "transcripts"
         transcripts_dir.mkdir(parents=True, exist_ok=True)
@@ -42,10 +44,11 @@ class ScribeStage(BaseStage):
             except Exception as e:
                 logger.error(f"Failed to load cache {cache_name}: {e}")
                 raise
-        elif file_name:
+        elif file_name: # Fallback to file_name if file_uri is not enough for some reason, but usually we need file object
             logger.info(f"Using direct file input (no cache): {file_name}")
             try:
                 model = genai.GenerativeModel(meta.configuration.transcribe.name)
+                # We need to get the file object again if we don't have it
                 file_obj = genai.get_file(file_name)
                 chat = model.start_chat(history=[{
                     "role": "user",
@@ -55,8 +58,7 @@ class ScribeStage(BaseStage):
                 logger.error(f"Failed to load file {file_name}: {e}")
                 raise
         else:
-            logger.warning("No cache or file found. Falling back to legacy chunk processing is not fully supported in this refactor.")
-            raise ValueError("Context Caching or File Input is required for this pipeline version.")
+            raise ValueError("No valid cache or file found in Ingest result.")
         
         # 1. Speaker Identification Turn
         logger.info("Step 1: Identifying speakers...")
@@ -184,9 +186,6 @@ Instructions:
                 merged_transcript.extend(lines)
                 
                 # Update stats (approximate from last chunk usage if available, or accumulate)
-                # Note: stream=True response usage_metadata might be tricky. 
-                # We'll check the final chunk's usage if possible, or the aggregated response.
-                # Actually, for chat, we can check chat.history or response.usage_metadata if available.
                 if hasattr(response, 'usage_metadata'):
                      usage = response.usage_metadata
                      total_input_tokens += usage.prompt_token_count
@@ -207,7 +206,7 @@ Instructions:
                 logger.info(f"Turn {turn_count} produced {len(lines)} segments.")
                 
                 # Save intermediate result
-                raw_file = transcripts_dir / "raw.json"
+                raw_file = transcripts_dir / "raw_transcript.json"
                 with open(raw_file, "w") as f:
                     json.dump(merged_transcript, f, indent=2, ensure_ascii=False)
                 
@@ -228,8 +227,11 @@ Instructions:
                      last_segment = lines[-1]
                      last_end_time = last_segment.get("end_time", 0)
                      
-                     if last_end_time >= meta.audio.duration_seconds:
-                         logger.info(f"Reached end of audio ({last_end_time:.2f}s / {meta.audio.duration_seconds:.2f}s). Stopping.")
+                     # Use audio duration from meta if available
+                     duration_seconds = meta.audio.duration_seconds or 0
+                     
+                     if duration_seconds > 0 and last_end_time >= duration_seconds:
+                         logger.info(f"Reached end of audio ({last_end_time:.2f}s / {duration_seconds:.2f}s). Stopping.")
                          is_complete = True
                      else:
                          # Check for low yield (potential stall)
@@ -242,7 +244,6 @@ Instructions:
                              consecutive_low_yield_turns = 0
                          
                          # Additional safety: detect single-word loops
-                         # If we are just generating "Угу" or "А" (short text) one by one, stop.
                          if len(lines) == 1 and len(lines[0].get("text", "")) < 5 and turn_count > 10:
                              logger.warning("Detected potential infinite loop of short segments. Stopping.")
                              is_complete = True
@@ -256,7 +257,7 @@ Instructions:
                 break
         
         # Save merged transcript (even if partial)
-        raw_file = transcripts_dir / "raw.json"
+        raw_file = transcripts_dir / "raw_transcript.json"
         with open(raw_file, "w") as f:
             json.dump(merged_transcript, f, indent=2, ensure_ascii=False)
 
@@ -287,11 +288,11 @@ Instructions:
             "cost_usd": cost
         }
 
-    def _load_prep_result(self, job_dir: Path) -> Dict[str, Any]:
-        prep_file = job_dir / "_stages" / "prep.json"
-        if not prep_file.exists():
-            raise FileNotFoundError("Prep stage result not found. Run prep first.")
-        with open(prep_file, "r") as f:
+    def _load_ingest_result(self, job_dir: Path) -> Dict[str, Any]:
+        ingest_file = job_dir / "_stages" / "ingest.json"
+        if not ingest_file.exists():
+            raise FileNotFoundError("Ingest stage result not found. Run ingest first.")
+        with open(ingest_file, "r") as f:
             return json.load(f)
 
     def _parse_jsonl(self, text: str) -> tuple[List[Dict[str, Any]], bool, bool]:

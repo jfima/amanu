@@ -8,7 +8,7 @@ from typing import Optional, List
 from .core.manager import JobManager
 from .core.config import load_config
 from .core.models import StageName, StageStatus
-from .pipeline import ScoutStage, PrepStage, ScribeStage, RefineStage, ShelveStage
+from .pipeline import IngestStage, ScribeStage, RefineStage, ShelveStage
 
 # Logger will be initialized after config is loaded
 logger = None
@@ -22,13 +22,10 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Pipeline Stages
-    scout_parser = subparsers.add_parser("scout", help="Hire amanuensis (Start job) [options: --model, --compression-mode]")
-    scout_parser.add_argument("file", help="Input audio file")
-    scout_parser.add_argument("--model", help="Transcribe model override")
-    scout_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
-    
-    prep_parser = subparsers.add_parser("prep", help="Prepare audio (Compress/Chunk)")
-    prep_parser.add_argument("job", nargs="?", help="Job ID or path")
+    ingest_parser = subparsers.add_parser("ingest", help="Prepare audio (Analyze/Compress/Upload) [options: --model, --compression-mode]")
+    ingest_parser.add_argument("file", help="Input audio file")
+    ingest_parser.add_argument("--model", help="Transcribe model override")
+    ingest_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
     
     scribe_parser = subparsers.add_parser("scribe", help="Transcribe audio")
     scribe_parser.add_argument("job", nargs="?", help="Job ID or path")
@@ -40,12 +37,12 @@ def main() -> None:
     shelve_parser.add_argument("job", nargs="?", help="Job ID or path")
 
     # Orchestration
-    run_parser = subparsers.add_parser("run", help="Run full pipeline [options: --template, --dry-run, --compression-mode]")
+    run_parser = subparsers.add_parser("run", help="Run full pipeline [options: --dry-run, --compression-mode]")
     run_parser.add_argument("file", help="Input audio file")
     run_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
-    run_parser.add_argument("--template", help="Override output template (e.g., 'summary', 'default')")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulate run without API calls or file changes")
-    
+    run_parser.add_argument("--skip-transcript", action="store_true", help="Skip transcription (Direct Analysis mode)")
+    run_parser.add_argument("--shelve-mode", choices=["timeline", "zettelkasten"], default="timeline", help="Shelve mode: timeline (YYYY/MM/DD) or zettelkasten (flat)")    
     watch_parser = subparsers.add_parser("watch", help="Watch input directory")
     
     # Jobs management
@@ -72,6 +69,10 @@ def main() -> None:
     jobs_delete_parser = jobs_subparsers.add_parser("delete", help="Delete job")
     jobs_delete_parser.add_argument("job_id", help="Job ID")
 
+    # Reporting
+    report_parser = subparsers.add_parser("report", help="Generate cost & usage report")
+    report_parser.add_argument("--days", type=int, default=30, help="Number of days to report (default: 30)")
+
     args = parser.parse_args()
 
     # Load config first
@@ -83,11 +84,14 @@ def main() -> None:
     debug_mode = args.verbose or getattr(config_context.defaults, 'debug', False)
     logger = setup_logging(debug=debug_mode)
 
-    manager = JobManager()
+    manager = JobManager(
+        work_dir=Path(config_context.paths.work),
+        results_dir=Path(config_context.paths.results)
+    )
 
     try:
-        if args.command == "scout":
-            # Handle hiring
+        if args.command == "ingest":
+            # Ingest stage: Analyze, Compress, Upload
             file_path = Path(args.file)
             if not file_path.exists():
                 logger.error(f"File not found: {file_path}")
@@ -112,26 +116,31 @@ def main() -> None:
                     logger.error(f"Model {args.model} not found in configuration.")
                     sys.exit(1)
             
-            
             if args.compression_mode:
                 config.compression_mode = args.compression_mode
                 
-            logger.info(f"Commissioning job for {file_path.name}...")
+            logger.info(f"Starting job for {file_path.name}...")
             meta = manager.create_job(file_path, config)
             logger.info(f"Job created: {meta.job_id}")
             
-            # Run scout stage
-            stage = ScoutStage(manager)
+            # Run ingest stage
+            stage = IngestStage(manager)
             stage.run(meta.job_id)
             
-        elif args.command in ["prep", "scribe", "refine", "shelve"]:
-            stage_name = StageName(args.command)
+        elif args.command in ["scribe", "refine", "shelve"]:
+            # Map command to stage
+            command_to_stage = {
+                "scribe": StageName.SCRIBE,
+                "refine": StageName.REFINE,
+                "shelve": StageName.SHELVE
+            }
+            stage_name = command_to_stage[args.command]
             job_id = _resolve_job(manager, args.job, stage_name)
             if not job_id:
                 sys.exit(1)
                 
             stage_map = {
-                StageName.PREP: PrepStage,
+                StageName.INGEST: IngestStage,
                 StageName.SCRIBE: ScribeStage,
                 StageName.REFINE: RefineStage,
                 StageName.SHELVE: ShelveStage
@@ -158,52 +167,31 @@ def main() -> None:
             if args.compression_mode:
                 config.compression_mode = args.compression_mode
             
-            if args.template:
-                config.template = args.template
-                logger.info(f"Using template: {config.template}")
+            if args.shelve_mode:
+                config.shelve.strategy = args.shelve_mode
 
             if args.dry_run:
                 logger.info("DRY RUN MODE: Skipping actual execution.")
-                logger.info(f"Configuration: Template={config.template}, Compression Mode={config.compression_mode}")
+                logger.info(f"Configuration: Compression Mode={config.compression_mode}, Shelve Mode={config.shelve.strategy}")
                 logger.info("Would create job and run stages: Scout -> Prep -> Scribe -> Refine -> Shelve -> Finalize")
                 return
 
-            # 1. Scout
-            meta = manager.create_job(file_path, config) # config is already defaults from context
+            # 1. Scout (Now Ingest)
+            # Note: We are keeping the old stage names in comments for now, but logic is inside Pipeline.run_all_stages
+            # Actually, Pipeline.run_all_stages runs everything. We don't need to call individual stages here if we use run_all_stages.
+            # But wait, the original code called individual stages.
+            # My new Pipeline.run_all_stages calls them all.
+            # So I should replace the manual calls with the single pipeline call.
+            
+            # Instantiate pipeline
+            from .pipeline.base import Pipeline
+            pipeline = Pipeline(manager, results_dir=Path(config_context.paths.results))
+            
+            meta = manager.create_job(file_path, config)
             job_id = meta.job_id
-            ScoutStage(manager).run(job_id)
             
-            # 2. Prep
-            PrepStage(manager).run(job_id)
-            
-            # 3. Scribe
-            ScribeStage(manager).run(job_id)
-            
-            # 4. Refine
-            RefineStage(manager).run(job_id)
-            
-            # 5. Shelve (Optional)
-            try:
-                ShelveStage(manager).run(job_id)
-            except Exception as e:
-                logger.warning(f"Shelve stage failed (non-critical): {e}")
-                
-            # 6. Finalize
-            # Load meta BEFORE finalizing (moving) the job
-            meta = manager.load_meta(job_id)
-            result_path = manager.finalize_job(job_id, Path(config_context.paths.results))
-            logger.info(f"Job completed! Results at: {result_path}")
-            
-            # Display Stats
-            stats = meta.processing
-            print(f"\n{'='*40}")
-            print(f"Processing Summary for {job_id}")
-            print(f"{'='*40}")
-            print(f"Requests:      {stats.request_count}")
-            print(f"Input Tokens:  {stats.total_tokens.input}")
-            print(f"Output Tokens: {stats.total_tokens.output}")
-            print(f"Total Cost:    ${stats.total_cost_usd:.4f}")
-            print(f"{'='*40}\n")
+            pipeline.run_all_stages(job_id, skip_transcript=args.skip_transcript)
+            return 0
 
         elif args.command == "watch":
             from .watcher import FileWatcher
@@ -243,7 +231,6 @@ def main() -> None:
                     print(f"Updated: {state.updated_at.strftime('%Y-%m-%d %H:%M:%S')}")
                     print(f"Current Stage: {state.current_stage}")
                     print(f"\nConfiguration:")
-                    print(f"  Template: {meta.configuration.template}")
                     print(f"  Language: {meta.configuration.language}")
                     print(f"  Transcribe Model: {meta.configuration.transcribe.name}")
                     print(f"  Refine Model: {meta.configuration.refine.name}")
@@ -304,6 +291,13 @@ def main() -> None:
                         logger.error(f"Job not found: {args.job_id}")
                 except Exception as e:
                     logger.error(f"Failed to delete: {e}")
+
+
+
+        elif args.command == "report":
+            from .core.reporting import CostReporter
+            reporter = CostReporter(manager)
+            reporter.print_report(days=args.days)
 
         else:
             parser.print_help()

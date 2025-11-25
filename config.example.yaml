@@ -1,28 +1,44 @@
 gemini:
-  api_key: ""
+  api_key: ""  # Your Gemini API key (or set GEMINI_API_KEY environment variable)
   transcribe_model: "gemini-2.0-flash"
   refine_model: "gemini-2.0-flash"
 
 processing:
-  template: "default"
-  language: "auto"
-  compression_mode: "compressed"  # Options: original (no compression), compressed (OGG), optimized (OGG + silence removal)
-  debug: false
+  language: "auto"  # Language code (e.g., "en", "ru") or "auto" for detection
+  compression_mode: "compressed"  # Options: original, compressed, optimized
+  shelve_mode: "timeline"  # Options: timeline (YYYY/MM/DD), zettelkasten (flat)
+  debug: false  # Enable debug logging and keep _stages/ folder
+  
+  # Multi-format output configuration
+  output:
+    artifacts:
+      - plugin: markdown
+        template: default  # Full transcript
+        filename: "transcript"  # Optional custom filename
+      - plugin: markdown
+        template: summary  # Executive summary
+        filename: "summary"
+      - plugin: pdf
+        template: report  # PDF report (requires: pip install reportlab)
+      - plugin: srt
+        template: standard  # Subtitles (not available in Direct Analysis mode)
+  
+  # Scribe stage configuration
   scribe:
-    retry_max: 3
-    retry_delay_seconds: 5
+    retry_max: 3  # Max retries for API errors
+    retry_delay_seconds: 5  # Delay between retries
 
 paths:
-  input: "./scribe-in"
-  work: "./scribe-work"
-  results: "./scribe-out"
+  input: "./input"  # Watch mode input directory
+  work: "./scribe-work"  # Temporary job processing directory
+  results: "./scribe-out"  # Final output directory
 
 cleanup:
-  failed_jobs_retention_days: 7
-  completed_jobs_retention_days: 1
-  auto_cleanup_enabled: true
+  failed_jobs_retention_days: 7  # Auto-delete failed jobs after N days
+  completed_jobs_retention_days: 1  # Auto-delete completed jobs after N days
+  auto_cleanup_enabled: true  # Enable automatic cleanup
 
-
+# Available Gemini models with pricing
 gemini_models:
   - name: "gemini-3-pro-preview"
     context_window:
@@ -31,6 +47,7 @@ gemini_models:
     cost_per_1M_tokens_usd:
       input: 2.0
       output: 12.0
+  
   - name: "gemini-2.5-pro"
     context_window:
       input_tokens: 1048576
@@ -38,6 +55,7 @@ gemini_models:
     cost_per_1M_tokens_usd:
       input: 1.25
       output: 10.0
+  
   - name: "gemini-2.5-flash"
     context_window:
       input_tokens: 1048576
@@ -45,6 +63,7 @@ gemini_models:
     cost_per_1M_tokens_usd:
       input: 0.30
       output: 2.50
+  
   - name: "gemini-2.5-flash-lite"
     context_window:
       input_tokens: 1048576
@@ -52,6 +71,7 @@ gemini_models:
     cost_per_1M_tokens_usd:
       input: 0.10
       output: 0.40
+  
   - name: "gemini-2.0-flash"
     context_window:
       input_tokens: 1048576

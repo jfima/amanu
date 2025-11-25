@@ -1,0 +1,30 @@
+# PDF Report: {{ summary | default('Transcript Report') }}
+
+## Details
+Date: {{ date | default('Unknown') }}
+Language: {{ language | default('Unknown') }}
+Sentiment: {{ sentiment | default('Unknown') }}
+
+{% if key_takeaways %}
+## Key Takeaways
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if action_items %}
+## Action Items
+{% for item in action_items %}
+- {% if item.assignee %}{{ item.assignee }}: {% endif %}{{ item.task }}
+{% endfor %}
+{% endif %}
+
+{% if quotes %}
+## Memorable Quotes
+{% for quote in quotes %}
+> "{{ quote.text }}" - {{ quote.speaker | default('Unknown') }}
+{% endfor %}
+{% endif %}
+
+## Full Text
+{{ clean_text | default('No clean text available.') }}

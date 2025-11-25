@@ -1,0 +1,44 @@
+# Summary
+
+## Overview
+{{ summary | default('No summary available.') }}
+
+{% if key_takeaways %}
+## Key Takeaways
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if action_items %}
+## Action Items
+{% for item in action_items %}
+- {% if item.assignee %}{{ item.assignee }}: {% endif %}{{ item.task }}
+{% endfor %}
+{% endif %}
+
+{% if quotes %}
+## Memorable Quotes
+{% for quote in quotes %}
+> "{{ quote.text }}" - {{ quote.speaker | default('Unknown') }}
+{% endfor %}
+{% endif %}
+
+{% if keywords %}
+## Keywords
+{{ keywords | join(', ') }}
+{% endif %}
+
+{% if participants %}
+## Participants
+{% for p in participants %}
+- {{ p }}
+{% endfor %}
+{% else %}
+No participants identified.
+{% endif %}
+
+## Metadata
+- **Date**: {{ date | default('Unknown') }}
+- **Language**: {{ language | default('Unknown') }}
+- **Sentiment**: {{ sentiment | default('Unknown') }}

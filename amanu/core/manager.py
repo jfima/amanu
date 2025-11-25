@@ -13,9 +13,11 @@ from .models import (
 logger = logging.getLogger("Amanu.JobManager")
 
 class JobManager:
-    def __init__(self, work_dir: Path = Path("work")):
+    def __init__(self, work_dir: Path = Path("work"), results_dir: Path = Path("results")):
         self.work_dir = work_dir
+        self.results_dir = results_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.results_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_job_dir(self, job_id: str) -> Path:
         # Support both full path and just job_id
@@ -23,72 +25,66 @@ class JobManager:
              path = Path(job_id)
              if path.exists():
                  return path
-        return self.work_dir / job_id
+        
+        # Check work dir
+        work_path = self.work_dir / job_id
+        if work_path.exists():
+            return work_path
+            
+        # Check results dir (search recursively? No, too slow. We need a better way or just fail)
+        # For loading state/meta, we might need to search.
+        # Let's try to find it in results if not in work.
+        # This is expensive. For now, let's assume if it's not in work, we can't easily find it by ID alone
+        # unless we index it. But for reporting, we iterate all.
+        
+        return work_path
 
     def create_job(self, file_path: Path, config: JobConfiguration) -> JobMeta:
-        """Commission a new job (SCOUT stage helper)."""
-        timestamp = datetime.now().strftime("%d-%H%M%S")
-        safe_filename = file_path.stem.replace(" ", "_")
-        job_id = f"{timestamp}_{safe_filename}"
-        job_dir = self.work_dir / job_id
+        """Initialize a new job."""
+        timestamp = datetime.now()
+        job_id = f"{timestamp.strftime('%y-%m%d-%H%M%S')}_{file_path.stem}"
+        # Sanitize job_id
+        job_id = "".join([c if c.isalnum() or c in "-_" else "_" for c in job_id])
         
-        # Create directory structure
-        (job_dir / "media").mkdir(parents=True)
-        (job_dir / "transcripts").mkdir(parents=True)
-        (job_dir / "_stages").mkdir(parents=True)
-
+        job_dir = self.work_dir / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup directories
+        (job_dir / "media").mkdir()
+        (job_dir / "transcripts").mkdir()
+        (job_dir / "_stages").mkdir()
+        
         # Copy original file
         dest_file = job_dir / "media" / f"original{file_path.suffix}"
         shutil.copy2(file_path, dest_file)
-
-        now = datetime.now()
-
-        # Initialize State
+        
+        # Create Initial State
         state = JobState(
             job_id=job_id,
             original_file=file_path.name,
-            created_at=now,
-            updated_at=now,
-            current_stage="commissioned"
+            created_at=timestamp,
+            updated_at=timestamp,
+            current_stage=StageName.INGEST.value,
+            location=job_dir
         )
         self.save_state(job_dir, state)
-
-        # Initialize Meta
+        
+        # Create Initial Meta
         meta = JobMeta(
             job_id=job_id,
             original_file=file_path.name,
-            created_at=now,
-            updated_at=now,
+            created_at=timestamp,
+            updated_at=timestamp,
             configuration=config
         )
         self.save_meta(job_dir, meta)
-
-        return meta
-
-    def load_state(self, job_id: str) -> JobState:
-        job_dir = self._get_job_dir(job_id)
-        state_file = job_dir / "state.json"
-        if not state_file.exists():
-            raise FileNotFoundError(f"State file not found for job {job_id}")
         
-        with open(state_file, "r") as f:
-            data = json.load(f)
-        return JobState(**data)
+        return meta
 
     def save_state(self, job_dir: Path, state: JobState) -> None:
         state.updated_at = datetime.now()
         with open(job_dir / "state.json", "w") as f:
             f.write(state.model_dump_json(indent=2))
-
-    def load_meta(self, job_id: str) -> JobMeta:
-        job_dir = self._get_job_dir(job_id)
-        meta_file = job_dir / "meta.json"
-        if not meta_file.exists():
-            raise FileNotFoundError(f"Meta file not found for job {job_id}")
-        
-        with open(meta_file, "r") as f:
-            data = json.load(f)
-        return JobMeta(**data)
 
     def save_meta(self, job_dir: Path, meta: JobMeta) -> None:
         meta.updated_at = datetime.now()
@@ -97,34 +93,98 @@ class JobManager:
 
     def update_stage_status(self, job_id: str, stage: StageName, status: StageStatus, error: Optional[str] = None) -> None:
         job_dir = self._get_job_dir(job_id)
-        state = self.load_state(job_id)
+        state = self.load_state(job_dir)
         
         state.stages[stage].status = status
-        if status == StageStatus.COMPLETED:
-            state.stages[stage].timestamp = datetime.now()
-            state.current_stage = stage.value
-        elif status == StageStatus.FAILED:
+        state.stages[stage].timestamp = datetime.now()
+        if error:
             state.stages[stage].error = error
             state.errors.append({
                 "stage": stage.value,
                 "error": error,
                 "timestamp": datetime.now().isoformat()
             })
-        
-        self.save_state(job_dir, state)
-
-    def list_jobs(self) -> List[JobState]:
-        jobs = []
-        if not self.work_dir.exists():
-            return []
             
-        for job_dir in self.work_dir.iterdir():
-            if job_dir.is_dir() and (job_dir / "state.json").exists():
+        # Update current stage tracker if we are progressing
+        if status == StageStatus.IN_PROGRESS:
+            state.current_stage = stage.value
+            
+        self.save_state(job_dir, state)
+    
+    def list_jobs(self, include_history: bool = False) -> List[JobState]:
+        jobs = []
+        
+        # 1. Active Jobs
+        if self.work_dir.exists():
+            for job_dir in self.work_dir.iterdir():
+                if job_dir.is_dir() and (job_dir / "state.json").exists():
+                    try:
+                        state = self.load_state(job_dir)
+                        state.location = job_dir
+                        jobs.append(state)
+                    except Exception as e:
+                        logger.error(f"Failed to load job {job_dir.name}: {e}")
+        
+        # 2. Historical Jobs
+        if include_history and self.results_dir.exists():
+            for meta_file in self.results_dir.rglob("meta.json"):
                 try:
-                    jobs.append(self.load_state(job_dir.name))
+                    job_dir = meta_file.parent
+                    try:
+                        state = self.load_state(job_dir)
+                        state.location = job_dir
+                        jobs.append(state)
+                    except FileNotFoundError:
+                        # Reconstruct state from meta if state.json is missing
+                        meta = self.load_meta(job_dir)
+                        state = JobState(
+                            job_id=meta.job_id,
+                            original_file=meta.original_file,
+                            created_at=meta.created_at,
+                            updated_at=meta.updated_at,
+                            current_stage="completed",
+                            location=job_dir
+                        )
+                        jobs.append(state)
                 except Exception as e:
-                    logger.error(f"Failed to load job {job_dir.name}: {e}")
+                    logger.error(f"Failed to load historical job {meta_file}: {e}")
+                    
         return sorted(jobs, key=lambda x: x.created_at, reverse=True)
+
+    def load_state(self, job_id_or_path: Any) -> JobState:
+        """Load job state from ID or Path."""
+        if isinstance(job_id_or_path, Path):
+            job_dir = job_id_or_path
+        else:
+            job_dir = self._get_job_dir(job_id_or_path)
+            
+        state_file = job_dir / "state.json"
+        if not state_file.exists():
+            # Try to find in results if not found (simple search)
+            # This is a bit hacky but helps if we only have ID
+            pass 
+            
+        if not state_file.exists():
+             raise FileNotFoundError(f"State file not found for job {job_id_or_path}")
+        
+        with open(state_file, "r") as f:
+            data = json.load(f)
+        return JobState(**data)
+
+    def load_meta(self, job_id_or_path: Any) -> JobMeta:
+        """Load job meta from ID or Path."""
+        if isinstance(job_id_or_path, Path):
+            job_dir = job_id_or_path
+        else:
+            job_dir = self._get_job_dir(job_id_or_path)
+            
+        meta_file = job_dir / "meta.json"
+        if not meta_file.exists():
+            raise FileNotFoundError(f"Meta file not found for job {job_id_or_path}")
+        
+        with open(meta_file, "r") as f:
+            data = json.load(f)
+        return JobMeta(**data)
 
     def get_ready_jobs(self, stage: StageName) -> List[JobState]:
         """Find jobs ready for a specific stage."""
@@ -155,16 +215,25 @@ class JobManager:
         job_dir = self._get_job_dir(job_id)
         meta = self.load_meta(job_id)
         
-        # Create result path: results/YYYY/MM/DD/job_id
-        date_path = meta.created_at.strftime("%Y/%m/%d")
-        final_dest = results_dir / date_path / job_dir.name
+        # Create result path based on shelve.strategy
+        if meta.configuration.shelve.strategy == "zettelkasten":
+            # Flat structure: results/zettelkasten/job_id
+            # Or maybe just results/job_id? Let's use a subfolder to be clean.
+            # User asked for "Flat/Topic-based". 
+            # Let's put them in a 'zettelkasten' folder to distinguish from timeline.
+            final_dest = results_dir / "zettelkasten" / job_dir.name
+        else:
+            # Default: Timeline (YYYY/MM/DD)
+            date_path = meta.created_at.strftime("%Y/%m/%d")
+            final_dest = results_dir / date_path / job_dir.name
+            
         final_dest.parent.mkdir(parents=True, exist_ok=True)
         
-        # Copy everything except _stages and state.json (unless debug is on)
+        # Copy everything except _stages (unless debug is on)
         if final_dest.exists():
             shutil.rmtree(final_dest)
         
-        ignore_patterns = ["state.json"]
+        ignore_patterns = []
         if not meta.configuration.debug:
             ignore_patterns.append("_stages")
             

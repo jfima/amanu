@@ -1,13 +1,14 @@
 from enum import Enum
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+from pathlib import Path
 from pydantic import BaseModel, Field
 
 class StageName(str, Enum):
-    SCOUT = "scout"
-    PREP = "prep"
+    INGEST = "ingest"
     SCRIBE = "scribe"
     REFINE = "refine"
+    GENERATE = "generate"
     SHELVE = "shelve"
 
 class StageStatus(str, Enum):
@@ -32,6 +33,7 @@ class JobState(BaseModel):
         stage: StageState() for stage in StageName
     })
     errors: List[Dict[str, Any]] = Field(default_factory=list)
+    location: Optional[Path] = None # Path to job directory (not serialized by default if we exclude None)
 
 class PricingModel(BaseModel):
     input: float
@@ -55,6 +57,25 @@ class ScribeConfig(BaseModel):
     retry_max: int = 3
     retry_delay_seconds: int = 5
 
+class ArtifactConfig(BaseModel):
+    plugin: str
+    template: str
+    filename: Optional[str] = None
+
+class OutputConfig(BaseModel):
+    artifacts: List[ArtifactConfig] = Field(default_factory=list)
+
+class ZettelkastenConfig(BaseModel):
+    id_format: str = "%Y%m%d%H%M"
+    filename_pattern: str = "{id} {slug}.md"
+    tag_routes: Dict[str, str] = Field(default_factory=dict)
+
+class ShelveConfig(BaseModel):
+    enabled: bool = True
+    root_path: Optional[str] = None 
+    strategy: str = "timeline" # timeline, zettelkasten, flat
+    zettelkasten: ZettelkastenConfig = Field(default_factory=ZettelkastenConfig)
+
 class PathsConfig(BaseModel):
     input: str = "./scribe-in"
     work: str = "./scribe-work"
@@ -66,9 +87,11 @@ class CleanupConfig(BaseModel):
     auto_cleanup_enabled: bool = True
 
 class JobConfiguration(BaseModel):
-    template: str
+    # Deprecated: template: str (Moved to output.artifacts)
     language: str
     compression_mode: str = "compressed"  # Options: "original", "compressed", "optimized"
+    shelve: ShelveConfig = Field(default_factory=ShelveConfig)
+    output: OutputConfig = Field(default_factory=OutputConfig)
     debug: bool = False
     scribe: ScribeConfig = Field(default_factory=ScribeConfig)
     transcribe: ModelSpec

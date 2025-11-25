@@ -1,10 +1,11 @@
 import logging
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
 
 import google.generativeai as genai
+from google.generativeai import caching
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .base import BaseStage
@@ -17,50 +18,58 @@ class RefineStage(BaseStage):
 
     def execute(self, job_dir: Path, meta: JobMeta, **kwargs) -> Dict[str, Any]:
         """
-        Refine transcript and generate summary.
+        Refine transcript and generate structured data (Enriched Context).
+        Supports two modes:
+        1. Standard: Input is raw_transcript.json (Text)
+        2. Direct: Input is ingest.json (Audio URI) - "Direct Analysis"
         """
         # Configure Gemini
         self._configure_gemini(meta.configuration.refine.name)
         
-        # Load raw transcript
-        raw_file = job_dir / "transcripts" / "raw.json"
-        if not raw_file.exists():
-            raise FileNotFoundError("Raw transcript not found. Run scribe first.")
-            
-        with open(raw_file, "r") as f:
-            raw_transcript = json.load(f)
-            
-        # 2. Generate Content
-        prompt = self._build_prompt(raw_transcript, meta.configuration.template, meta.configuration.language)
-        response = self._generate_content(meta.configuration.refine.name, prompt)
+        # Determine Input Mode
+        raw_transcript_file = job_dir / "transcripts" / "raw_transcript.json"
+        ingest_file = job_dir / "_stages" / "ingest.json"
         
-        # Parse JSON response
+        input_data = None
+        mode = "unknown"
+        
+        if raw_transcript_file.exists():
+            logger.info("Mode: Standard (Text Analysis)")
+            mode = "standard"
+            with open(raw_transcript_file, "r") as f:
+                input_data = json.load(f)
+        elif ingest_file.exists():
+            logger.info("Mode: Direct Analysis (Audio Processing)")
+            mode = "direct"
+            with open(ingest_file, "r") as f:
+                input_data = json.load(f)
+        else:
+            raise FileNotFoundError("No input found. Run Scribe (for Standard) or Ingest (for Direct).")
+
+        # Generate Enriched Context
+        if mode == "standard":
+            response = self._process_text(input_data, meta)
+        else:
+            response = self._process_audio(input_data, meta)
+            
+        # Parse Response
         try:
             result_data = json.loads(response.text)
             if isinstance(result_data, list):
-                logger.warning("Model returned a list instead of a dict. Using first item if available.")
-                if result_data:
-                    result_data = result_data[0]
-                else:
-                    result_data = {}
-            
-            clean_text = result_data.get("clean_transcript", "")
-            analysis_data = {k: v for k, v in result_data.items() if k != "clean_transcript"}
+                logger.warning("Model returned a list instead of a dict. Using first item.")
+                result_data = result_data[0] if result_data else {}
         except json.JSONDecodeError:
-            logger.error("Failed to parse Refine stage JSON response. Falling back to raw text.")
-            clean_text = response.text
-            analysis_data = {}
+            logger.error("Failed to parse Refine JSON response.")
+            raise ValueError("Model failed to return valid JSON.")
 
-        # 3. Save Results
-        clean_file = job_dir / "transcripts" / "clean.md"
-        with open(clean_file, "w") as f:
-            f.write(clean_text)
+        # Save Enriched Context
+        context_file = job_dir / "transcripts" / "enriched_context.json"
+        context_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(context_file, "w") as f:
+            json.dump(result_data, f, indent=2, ensure_ascii=False)
             
-        analysis_file = job_dir / "transcripts" / "analysis.json"
-        with open(analysis_file, "w") as f:
-            json.dump(analysis_data, f, indent=2, ensure_ascii=False)
-            
-        # 4. Update Meta
+        # Update Meta
         usage = response.usage_metadata
         meta.processing.total_tokens.input += usage.prompt_token_count
         meta.processing.total_tokens.output += usage.candidates_token_count
@@ -68,7 +77,8 @@ class RefineStage(BaseStage):
         meta.processing.request_count += 1
         meta.processing.steps.append({
             "stage": "refine",
-            "step": "refine_transcript",
+            "step": "analysis",
+            "mode": mode,
             "timestamp": datetime.now().isoformat(),
             "model": meta.configuration.refine.name,
             "tokens": {
@@ -84,8 +94,8 @@ class RefineStage(BaseStage):
         meta.processing.total_cost_usd += cost
         
         return {
-            "clean_transcript_file": str(clean_file),
-            "analysis_file": str(analysis_file),
+            "enriched_context_file": str(context_file),
+            "mode": mode,
             "model": meta.configuration.refine.name,
             "tokens": {
                 "input": usage.prompt_token_count,
@@ -94,55 +104,133 @@ class RefineStage(BaseStage):
             "cost_usd": cost
         }
 
-
-
-    def _build_prompt(self, transcript: list, template_name: str, language: str) -> str:
+    def _process_text(self, transcript: list, meta: JobMeta):
+        """Process text transcript."""
         transcript_text = json.dumps(transcript, indent=2, ensure_ascii=False)
+        target_language = meta.configuration.language if meta.configuration.language != 'auto' else 'Detect from transcript'
         
-        target_language = language if language != 'auto' else 'Detect from transcript'
-        
-        # Load template instructions
-        template_instructions = self._load_template(template_name)
-        
-        return f"""
-You are a professional editor. Analyze and clean up this transcript.
+        prompt = f"""
+You are a professional editor and analyst.
+Transform the raw transcript into structured data and extract key intelligence.
 
 INPUT TRANSCRIPT:
 {transcript_text}
 
 INSTRUCTIONS:
-1. Clean up the text: Remove filler words, fix grammar, group by speaker.
-2. Analyze the content: Identify participants, categories, keywords, and write a summary.
-3. IMPORTANT: All output (summary, categories, keywords, etc.) MUST be in the following language: {target_language}.
-4. IMPORTANT: For "participants", list ONLY the speakers who actually spoke in the audio (those who appear as "speaker_id" in the transcript). Do NOT include names that were only mentioned in conversation.
-5. Format the "clean_transcript" field according to these template instructions:
+1. **Clean Text (Literary Editing)**: 
+   - Convert the spoken transcript into readable, written-style text.
+   - Remove filler words, stuttering, and repetitions.
+   - Improve grammar and sentence structure while preserving the original meaning and tone.
+   - Output as plain text (NO Markdown formatting - that will be applied later).
+   - If it's a dialogue, keep it as a script but polished. If it's a monologue/speech, turn it into flowing text.
 
-{template_instructions}
+2. **Analysis**:
+   - **Summary**: A concise executive summary.
+   - **Key Takeaways**: 3-5 most important points (bullet points).
+   - **Action Items**: Tasks, assignments, or next steps mentioned (who, what, when).
+   - **Quotes**: 3-5 most memorable or significant verbatim quotes.
+   - **Keywords & Entities**: Extract relevant tags.
 
-6. Output strictly valid JSON with this schema:
+3. **Language**: All output MUST be in {target_language}.
+
+OUTPUT SCHEMA (JSON):
 {{
-  "clean_transcript": "markdown string of the cleaned transcript",
-  "summary": "TL;DR summary (3-5 bullets)",
-  "participants": ["list of speakers/roles - use real names from transcript, not 'Speaker A/B'"],
-  "categories": ["list of categories"],
-  "keywords": ["list of keywords"],
-  "content_type": "meeting|interview|lecture|voice_note|other",
+  "clean_text": "string (plain text, no markdown)",
+  "summary": "string (concise executive summary)",
+  "key_takeaways": ["string"],
+  "action_items": [
+    {{ "assignee": "string or null", "task": "string" }}
+  ],
+  "quotes": [
+    {{ "speaker": "string", "text": "string" }}
+  ],
+  "keywords": ["string"],
+  "participants": ["string (real names)"],
+  "topics": ["string"],
   "sentiment": "positive|neutral|negative",
-  "language": "language code (e.g. en, ru, es)"
+  "language": "string (detected language code)"
 }}
-
-Target Language: {target_language}
 """
+        return self._generate_content(meta.configuration.refine.name, prompt)
 
-    def _generate_content(self, model_name: str, prompt: str):
-        model = genai.GenerativeModel(model_name)
+    def _process_audio(self, ingest_data: Dict, meta: JobMeta):
+        """Process audio directly (Direct Analysis)."""
+        gemini_data = ingest_data.get("gemini", {})
+        cache_name = gemini_data.get("cache_name")
+        file_name = gemini_data.get("file_name")
         
+        model = genai.GenerativeModel(meta.configuration.refine.name)
+        
+        # Prepare content
+        if cache_name:
+            logger.info(f"Using cached audio: {cache_name}")
+            cache = caching.CachedContent.get(cache_name)
+            model = genai.GenerativeModel.from_cached_content(cached_content=cache)
+            content_part = "Analyze the audio in the context."
+        elif file_name:
+            logger.info(f"Using direct audio file: {file_name}")
+            file_obj = genai.get_file(file_name)
+            content_part = [file_obj, "Analyze this audio."]
+        else:
+            raise ValueError("No audio source found in Ingest data.")
+
+        target_language = meta.configuration.language if meta.configuration.language != 'auto' else 'Detect from audio'
+        
+        prompt = f"""
+You are a professional analyst. Listen to the audio and extract structured intelligence.
+
+INSTRUCTIONS:
+1. **Analysis**:
+   - **Summary**: A detailed summary of the conversation.
+   - **Key Takeaways**: 3-5 most important points.
+   - **Action Items**: Tasks or next steps mentioned.
+   - **Quotes**: Key quotes verbatim.
+   
+2. **Clean Text (Overview)**: 
+   - Since this is direct analysis, provide a high-level structured overview or a polished summary of key segments.
+   - Output as plain text (NO Markdown - formatting will be applied later).
+
+3. **Language**: All output MUST be in {target_language}.
+
+OUTPUT SCHEMA (JSON):
+{{
+  "clean_text": "string (plain text overview)",
+  "summary": "string (concise summary)",
+  "key_takeaways": ["string"],
+  "action_items": [
+    {{ "assignee": "string or null", "task": "string" }}
+  ],
+  "quotes": [
+    {{ "speaker": "string", "text": "string" }}
+  ],
+  "keywords": ["string"],
+  "participants": ["string (real names)"],
+  "topics": ["string"],
+  "sentiment": "positive|neutral|negative",
+  "language": "string (detected language code)"
+}}
+"""
+        # For cache, we just send the prompt string. For file, we send list [file, prompt].
+        # But wait, if we use from_cached_content, the model is already "primed".
+        # So we just send the text prompt.
+        
+        if cache_name:
+             return self._generate_content_with_model(model, prompt)
+        else:
+             # Direct file
+             return self._generate_content_with_model(model, [file_obj, prompt])
+
+    def _generate_content(self, model_name: str, prompt: Union[str, list]):
+        model = genai.GenerativeModel(model_name)
+        return self._generate_content_with_model(model, prompt)
+
+    def _generate_content_with_model(self, model, prompt):
         generation_config = {
             "temperature": 0.3,
             "response_mime_type": "application/json"
         }
         
-        response = model.generate_content(
+        return model.generate_content(
             prompt,
             generation_config=generation_config,
             safety_settings={
@@ -152,19 +240,3 @@ Target Language: {target_language}
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
         )
-        return response
-
-    def _load_template(self, template_name: str) -> str:
-        """Load template instructions from file."""
-        from pathlib import Path
-        
-        # Try to load from amanu/templates/
-        template_dir = Path(__file__).parent.parent / "templates"
-        template_file = template_dir / f"{template_name}.md"
-        
-        if template_file.exists():
-            with open(template_file, "r") as f:
-                return f.read()
-        else:
-            logger.warning(f"Template {template_name}.md not found. Using default instructions.")
-            return "Format as a clear, well-structured markdown document with headings and sections."

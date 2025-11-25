@@ -4,124 +4,284 @@
 
 In the spirit of the great amanuenses of history, it sits ready to capture your spoken words and commit them to the page. But unlike its human predecessors, this scribe never tires, never misses a word, and types at the speed of light.
 
-Feed it your voice notes, interviews, or ramblings, and watch as it weaves them into structured, clean, and beautifully formatted documents.
+Feed it your voice notes, interviews, or ramblings, and watch as it weaves them into structured documents in multiple formats: **Markdown**, **PDF**, and **SRT subtitles**.
 
 ![Andrew Taylor Still with his amanuensis, Annie Morris, who is at a typewriter](./amanuensis.png)
 
 *Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. A fitting metaphor: you speak, it crafts.*
 
+---
+
 ## 🧠 How It Works
 
-Amanu operates as a state-based pipeline, treating your audio processing as a multi-stage "job" rather than a simple script.
+Amanu operates as a **5-stage pipeline**, treating your audio processing as a multi-stage "job" with full state management.
 
 ### The Pipeline
-1.  **Scout**: Analyzes the input file. It checks duration, format, and complexity to decide the best strategy (e.g., "Should I split this?", "Is it too big for one pass?").
-2.  **Prep**: Optimizes the media.
-    *   **Compression**: Converts heavy WAV/MP3 files into highly efficient **OGG Opus (24k bitrate)**. This reduces file size by up to 10x without losing speech clarity, allowing hours of audio to fit into a single API call.
-    *   **Smart Caching**: Instead of re-uploading the same file, Amanu uses **Gemini Context Caching**. It uploads the file once and creates a temporary "cache" in the cloud, making subsequent requests faster and cheaper.
-3.  **Scribe**: The core transcription engine.
-    *   **Speaker Identification**: First, it listens to the whole file to identify speakers and assign consistent names.
-    *   **Streamed Transcription**: It transcribes in chunks using a robust JSONL streaming protocol, ensuring that even if the connection drops, progress is saved.
-4.  **Refine**: Post-processing intelligence. It takes the raw transcript and applies a "Template" (e.g., Summary, Blog Post) to generate the final clean document.
-5.  **Shelve**: Organizes the results into a structured `YYYY/MM/DD` folder hierarchy.
+
+```
+Audio File → INGEST → SCRIBE → REFINE → GENERATE → SHELVE → Results
+```
+
+1. **INGEST** (Preparation)
+   - Analyzes audio metadata (duration, format, bitrate)
+   - Compresses to OGG Opus (24kbps) for optimal API efficiency
+   - Uploads to Gemini with smart caching (5+ min files)
+
+2. **SCRIBE** (Transcription)
+   - Identifies speakers and assigns consistent names
+   - Generates time-aligned transcript with JSONL streaming
+   - Retry logic for API rate limits (429 errors)
+
+3. **REFINE** (Intelligence Extraction)
+   - Extracts structured data: summary, keywords, action items, quotes
+   - Two modes: **Standard** (high quality) or **Direct** (low cost, skips transcript)
+   - Outputs pure JSON data (no formatting)
+
+4. **GENERATE** (Multi-Format Output)
+   - Plugin-based architecture for extensibility
+   - Applies Jinja2 templates to create user artifacts
+   - Supports: Markdown, PDF, SRT subtitles
+
+5. **SHELVE** (Organization)
+   - Timeline mode: `YYYY/MM/DD/job_id/`
+   - Zettelkasten mode: ID-based naming with tag routing
+   - Configurable storage strategies
+
+---
 
 ## 🚀 Key Features
 
-- **Large File Handling**: By combining **OGG compression** with Gemini's **2-million token context window**, Amanu can process massive files (hours of audio) in a single pass without arbitrary splitting.
-- **Context Caching**: Leverages Google's advanced caching to reduce latency and cost for repeated operations on the same audio.
-- **Daemon Mode**: Run `amanu watch` to turn a folder into a magic portal. Drop a file in, get a markdown file out.
-- **Resilient**: Built-in retry mechanisms for API limits (429 errors) and network glitches.
+### Core Capabilities
+- ✅ **Multi-Format Output**: Markdown, PDF, SRT subtitles
+- ✅ **Large File Handling**: Process hours of audio in a single pass (2M token context)
+- ✅ **Context Caching**: Reduce latency and cost for long files
+- ✅ **Speaker Identification**: Automatic speaker detection and naming
+- ✅ **Job Management**: Track, retry, and resume failed jobs
+- ✅ **Watch Mode**: Auto-process files dropped in a folder
+- ✅ **Cost Tracking**: Detailed token usage and pricing reports
 
-## 💰 Cost Estimation
+### Advanced Features
+- ✅ **Direct Analysis Mode**: Skip transcription for cost savings (`--skip-transcript`)
+- ✅ **Configurable Compression**: Original, compressed, or optimized modes
+- ✅ **Template System**: Jinja2-based customizable output templates
+- ✅ **Plugin Architecture**: Easily add new output formats
+- ✅ **Retry Logic**: Automatic retry for API errors with configurable delays
 
-Amanu calculates the estimated cost for every job based on the specific pricing of the model used.
-- **Transparent Pricing**: It tracks both input (audio/text) and output (transcription) tokens.
-- **Model Recommendation**: Currently, **Gemini 2.5 Flash** or **Gemini 2.0 Flash** offer the best balance of speed, accuracy, and cost efficiency for this pipeline.
-- **Detailed Logs**: Check `_stages/scribe.json` in the output folder for a precise breakdown of token usage and cost per step.
-
-## 🗺 Roadmap
-
-We are building the ultimate media-to-text engine. Coming soon:
-
-- **Multi-Format Output**:
-    - [ ] **SRT/VTT**: Ready-to-upload subtitles for YouTube/Premiere.
-    - [ ] **DOCX**: Formatted Word documents for corporate use.
-    - [ ] **PDF**: Polished reports.
-- **Multi-API Support**:
-    - [ ] **OpenAI Whisper**: For local or alternative cloud transcription.
-    - [ ] **Anthropic Claude**: For advanced reasoning and summarization.
-- **Content Templates**:
-    - [ ] **Video Script**: Turn a rambling voice note into a structured YouTube script.
-    - [ ] **Blog Post**: Convert a lecture into an SEO-optimized article.
+---
 
 ## 🛠 Installation
 
-1.  **Clone & Install**:
-    ```bash
-    git clone https://github.com/jfima/amanu
-    cd amanu
-    pip install -e .
-    ```
+### Requirements
+- **Python**: ≥3.10
+- **FFmpeg**: For audio processing
+- **ReportLab**: For PDF generation (optional: `pip install reportlab`)
 
-2.  **Configuration**:
-    ```bash
-    cp config.example.yaml config.yaml
-    ```
-    Edit `config.yaml`:
-    ```yaml
-    gemini:
-      api_key: "YOUR_KEY_HERE"
-    
-    processing:
-      debug: true         # See exactly what's happening under the hood
-      template: "default" # The blueprint for your output
-    ```
+### Setup
+
+```bash
+# Clone and install
+git clone https://github.com/jfima/amanu
+cd amanu
+pip install -e .
+
+# Configure
+cp config.example.yaml config.yaml
+```
+
+Edit `config.yaml`:
+```yaml
+gemini:
+  api_key: "YOUR_GEMINI_API_KEY"
+  transcribe_model: "gemini-2.0-flash"
+  refine_model: "gemini-2.0-flash"
+
+processing:
+  language: "en"
+  compression_mode: "compressed"
+  debug: true
+  output:
+    artifacts:
+      - plugin: markdown
+        template: default
+        filename: "transcript"
+      - plugin: markdown
+        template: summary
+        filename: "summary"
+      - plugin: pdf
+        template: report
+      - plugin: srt
+        template: standard
+```
+
+---
 
 ## ⚡ Usage
 
-### The "Magic Folder" (Watch Mode)
-The easiest way to use Amanu. Just run this in the background:
+### Quick Start
+```bash
+# Process a single file
+amanu run interview.mp3
+
+# With options
+amanu run meeting.wav --compression-mode optimized --shelve-mode zettelkasten
+
+# Direct Analysis (skip transcript, lower cost)
+amanu run lecture.m4a --skip-transcript
+```
+
+### Watch Mode (Magic Folder)
 ```bash
 amanu watch
 ```
-Now, whenever you save a voice note to `scribe-in/`, Amanu wakes up, processes it, and delivers the result to `scribe-out/`.
+Drop files in `input/`, get results in `scribe-out/YYYY/MM/DD/`.
 
-### Manual Control
-Process a specific file with custom settings:
-
+### Manual Pipeline Control
 ```bash
-# Standard run
-amanu run interview.mp3
+# Run individual stages
+amanu ingest audio.mp3          # Prepare audio
+amanu scribe [job_id]           # Transcribe
+amanu refine [job_id]           # Extract intelligence
+amanu shelve [job_id]           # Organize results
 
-# Generate a summary using the optimized compression strategy
-amanu run meeting.wav --template summary --compression-mode optimized
+# Job management
+amanu jobs list                 # List all jobs
+amanu jobs show <job_id>        # Inspect job details
+amanu jobs retry <job_id>       # Retry failed job
+amanu jobs cleanup --older-than 7  # Clean old jobs
 
-# See debug logs in real-time
-amanu run -v lecture.m4a
+# Cost reporting
+amanu report --days 30          # Last 30 days usage
 ```
 
-### Job Management
-Amanu keeps track of everything.
-```bash
-amanu jobs list              # See what's running or failed
-amanu jobs show <JOB_ID>     # Inspect a specific job
-amanu jobs retry <JOB_ID>    # Resume a failed job exactly where it left off
+---
+
+## 📁 Output Structure
+
 ```
-
-## Output Structure
-
-Your data is organized for the long term:
-```text
 scribe-out/
-  └── 2025/
-      └── 11/
-          └── 24/
-              └── JOB_ID/
-                  ├── transcripts/
-                  │   ├── clean.md      # The polished, readable result
-                  │   └── raw.json      # The precise, time-aligned data
-                  └── _stages/          # Detailed logs of every decision made
+└── 2025/
+    └── 11/
+        └── 26/
+            └── 25-1126-143022_interview/
+                ├── transcript.md          # Full transcript
+                ├── summary.md             # Executive summary
+                ├── report.pdf             # PDF report
+                ├── standard.srt           # Subtitles
+                ├── media/
+                │   ├── original.mp3
+                │   └── compressed.ogg
+                ├── transcripts/
+                │   ├── raw_transcript.json
+                │   └── enriched_context.json
+                ├── _stages/               # Debug logs (if enabled)
+                │   ├── ingest.json
+                │   ├── scribe.json
+                │   ├── refine.json
+                │   ├── generate.json
+                │   └── shelve.json
+                ├── state.json
+                └── meta.json
 ```
 
-## License
-MIT
+---
+
+## 🎨 Customization
+
+### Templates
+Create custom Jinja2 templates in `amanu/templates/{plugin}/`:
+
+```jinja2
+# templates/markdown/custom.j2
+# {{ summary }}
+
+## Key Points
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+
+## Full Text
+{{ clean_text }}
+```
+
+Update `config.yaml`:
+```yaml
+output:
+  artifacts:
+    - plugin: markdown
+      template: custom
+      filename: "my_output"
+```
+
+### Plugins
+Extend with custom output formats by implementing `BasePlugin`:
+
+```python
+from amanu.plugins.base import BasePlugin
+
+class MyPlugin(BasePlugin):
+    @property
+    def name(self) -> str:
+        return "myformat"
+    
+    def generate(self, context, template_content, output_path, **kwargs):
+        # Your custom logic
+        return output_path
+```
+
+---
+
+## 💰 Cost Estimation
+
+Amanu tracks costs in real-time:
+
+| Model | Input ($/1M tokens) | Output ($/1M tokens) |
+|-------|---------------------|----------------------|
+| gemini-2.0-flash | $0.10 | $0.40 |
+| gemini-2.5-flash | $0.30 | $2.50 |
+
+**Example**: 1-hour audio (~15K tokens) ≈ $0.01-0.05 depending on mode and model.
+
+Check `_stages/scribe.json` for detailed breakdowns.
+
+---
+
+## 🗺 Roadmap
+
+- [ ] **Additional Plugins**: DOCX, HTML, LaTeX
+- [ ] **Multi-API Support**: OpenAI Whisper, Anthropic Claude
+- [ ] **Advanced Templates**: Blog posts, video scripts, meeting minutes
+- [ ] **Web UI**: Browser-based interface
+- [ ] **Batch Processing**: Process multiple files in parallel
+
+---
+
+## 📚 Documentation
+
+- [Architecture Report](./docs/architecture_report.md) - Detailed system design
+- [Plugin Development](./docs/plugins.md) - Create custom output formats
+- [Template Guide](./docs/templates.md) - Customize output formatting
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+---
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+Built with:
+- [Google Gemini](https://ai.google.dev/) - AI transcription and analysis
+- [ReportLab](https://www.reportlab.com/) - PDF generation
+- [Jinja2](https://jinja.palletsprojects.com/) - Template engine
+- [FFmpeg](https://ffmpeg.org/) - Audio processing

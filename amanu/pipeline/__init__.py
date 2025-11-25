@@ -1,6 +1,5 @@
 from .base import BaseStage, Pipeline
-from .scout import ScoutStage
-from .prep import PrepStage
+from .ingest import IngestStage
 from .scribe import ScribeStage
 from .refine import RefineStage
 from .shelve import ShelveStage

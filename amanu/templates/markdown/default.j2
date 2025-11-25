@@ -1,0 +1,49 @@
+# {{ summary | default('Transcript Summary') }}
+
+## Metadata
+- **Date**: {{ date | default('Unknown') }}
+- **Language**: {{ language | default('Unknown') }}
+- **Sentiment**: {{ sentiment | default('Unknown') }}
+
+{% if participants %}
+## Participants
+{% for p in participants %}
+- {{ p }}
+{% endfor %}
+{% endif %}
+
+{% if summary %}
+## Summary
+{{ summary }}
+{% endif %}
+
+{% if key_takeaways %}
+## Key Takeaways
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if action_items %}
+## Action Items
+{% for item in action_items %}
+- {% if item.assignee %}{{ item.assignee }}: {% endif %}{{ item.task }}
+{% endfor %}
+{% endif %}
+
+{% if quotes %}
+## Memorable Quotes
+{% for quote in quotes %}
+> "{{ quote.text }}" - {{ quote.speaker | default('Unknown') }}
+{% endfor %}
+{% endif %}
+
+{% if keywords %}
+## Keywords
+{{ keywords | join(', ') }}
+{% endif %}
+
+{% if clean_text %}
+## Full Transcript (Edited)
+{{ clean_text }}
+{% endif %}
