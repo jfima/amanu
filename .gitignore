@@ -11,6 +11,7 @@ build/
 develop-eggs/
 dist/
 downloads/
+archive/
 eggs/
 .eggs/
 lib/
@@ -40,19 +41,12 @@ env/
 scribe-in/
 scribe-out/
 scribe-work/
-input/
-work/
-results/
-quarantine/
 
 # Logs
 logs/
 *.log
 
-# Test files
-test_audio.mp3
-test_*.mp3
-test_*.wav
+
 
 # Documentation (optional - remove if you want to commit docs)
 technical_specification.md

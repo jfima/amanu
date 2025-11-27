@@ -1,0 +1,14 @@
+TRANSCRIPT (TIMESTAMPED)
+================================================================================
+Date: {{ date | default('Unknown') }}
+Participants: {{ participants | join(', ') if participants else 'Unknown' }}
+
+--------------------------------------------------------------------------------
+
+{% if transcript_segments %}
+{% for segment in transcript_segments %}
+[{{ segment.start_time | round(1) }}s] {{ segment.speaker_id }}: {{ segment.text }}
+{% endfor %}
+{% else %}
+(No transcript segments available)
+{% endif %}

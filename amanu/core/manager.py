@@ -13,9 +13,10 @@ from .models import (
 logger = logging.getLogger("Amanu.JobManager")
 
 class JobManager:
-    def __init__(self, work_dir: Path = Path("work"), results_dir: Path = Path("results")):
+    def __init__(self, work_dir: Path = Path("work"), results_dir: Path = Path("results"), providers: Dict[str, Any] = None):
         self.work_dir = work_dir
         self.results_dir = results_dir
+        self.providers = providers or {}
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -195,9 +196,9 @@ class JobManager:
         target_idx = stage_order.index(stage.value)
         
         for job in jobs:
-            # Check if stage is already completed
-            if job.stages[stage].status == StageStatus.COMPLETED:
-                continue
+            # We no longer skip completed stages. 
+            # If previous stages are done, it's ready for re-execution.
+            pass
                 
             # Check if previous stages are completed
             is_ready = True

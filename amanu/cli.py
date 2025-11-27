@@ -1,5 +1,6 @@
 import argparse
 import sys
+import os
 import logging
 import time
 from pathlib import Path
@@ -21,6 +22,10 @@ def main() -> None:
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # Setup
+    setup_parser = subparsers.add_parser("setup", help="Run interactive setup wizard")
+
+
     # Pipeline Stages
     ingest_parser = subparsers.add_parser("ingest", help="Prepare audio (Analyze/Compress/Upload) [options: --model, --compression-mode]")
     ingest_parser.add_argument("file", help="Input audio file")
@@ -29,12 +34,15 @@ def main() -> None:
     
     scribe_parser = subparsers.add_parser("scribe", help="Transcribe audio")
     scribe_parser.add_argument("job", nargs="?", help="Job ID or path")
+    scribe_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
     
     refine_parser = subparsers.add_parser("refine", help="Refine transcript")
     refine_parser.add_argument("job", nargs="?", help="Job ID or path")
+    refine_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
     
     shelve_parser = subparsers.add_parser("shelve", help="Categorize result")
     shelve_parser.add_argument("job", nargs="?", help="Job ID or path")
+    shelve_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
 
     # Orchestration
     run_parser = subparsers.add_parser("run", help="Run full pipeline [options: --dry-run, --compression-mode]")
@@ -42,7 +50,8 @@ def main() -> None:
     run_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
     run_parser.add_argument("--dry-run", action="store_true", help="Simulate run without API calls or file changes")
     run_parser.add_argument("--skip-transcript", action="store_true", help="Skip transcription (Direct Analysis mode)")
-    run_parser.add_argument("--shelve-mode", choices=["timeline", "zettelkasten"], default="timeline", help="Shelve mode: timeline (YYYY/MM/DD) or zettelkasten (flat)")    
+    run_parser.add_argument("--shelve-mode", choices=["timeline", "zettelkasten"], default="timeline", help="Shelve mode: timeline (YYYY/MM/DD) or zettelkasten (flat)")
+    run_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage (job remains in work directory)")    
     watch_parser = subparsers.add_parser("watch", help="Watch input directory")
     
     # Jobs management
@@ -79,17 +88,55 @@ def main() -> None:
     config_context = load_config()
     config = config_context.defaults
     
+    # Check for missing configuration (unless running setup or help)
+    if args.command != "setup" and args.command is not None:
+        # Check if API key is present either in env or config
+        gemini_config = config_context.providers.get("gemini")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key and gemini_config:
+            api_key = gemini_config.api_key
+        
+        if not api_key:
+            # Check if we have a valid config file at all
+            config_path = Path.home() / ".config" / "amanu" / "config.yaml"
+            if not config_path.exists() and not os.environ.get("GEMINI_API_KEY"):
+                print("\n[!] Amanu is not configured yet.")
+                print("    Please run 'amanu setup' to configure the system and API key.\n")
+                # We don't exit here strictly, as some commands might not need it, 
+                # but for most operations it's critical.
+                # Let's warn but proceed, or exit?
+                # Most commands need API key.
+                if args.command in ["ingest", "scribe", "refine", "run"]:
+                     print("Error: GEMINI_API_KEY is missing.")
+                     sys.exit(1)
+
+    
     # Setup logging based on config.debug or --verbose flag
     from .utils import setup_logging
     debug_mode = args.verbose or getattr(config_context.defaults, 'debug', False)
     logger = setup_logging(debug=debug_mode)
 
+    # Global exception handler
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logger.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback))
+
+    sys.excepthook = handle_exception
+
     manager = JobManager(
         work_dir=Path(config_context.paths.work),
-        results_dir=Path(config_context.paths.results)
+        results_dir=Path(config_context.paths.results),
+        providers=config_context.providers
     )
 
     try:
+        if args.command == "setup":
+            from .wizard import run_wizard
+            run_wizard()
+            return
+
         if args.command == "ingest":
             # Ingest stage: Analyze, Compress, Upload
             file_path = Path(args.file)
@@ -139,15 +186,18 @@ def main() -> None:
             if not job_id:
                 sys.exit(1)
                 
-            stage_map = {
-                StageName.INGEST: IngestStage,
-                StageName.SCRIBE: ScribeStage,
-                StageName.REFINE: RefineStage,
-                StageName.SHELVE: ShelveStage
-            }
+            # Always reset stage status to ensure imperative execution
+            manager.retry_job(job_id, from_stage=stage_name)
+                
+            # Determine stop_after
+            # If --stop-after is provided, use it.
+            # If not provided, default to stopping after the requested stage (e.g. 'amanu scribe' stops after scribe)
+            # This maintains backward compatibility where 'amanu scribe' just ran scribe.
+            stop_after = StageName(args.stop_after) if args.stop_after else stage_name
             
-            stage = stage_map[stage_name](manager)
-            stage.run(job_id)
+            from .pipeline.base import Pipeline
+            pipeline = Pipeline(manager, results_dir=Path(config_context.paths.results))
+            pipeline.run_all_stages(job_id, stop_after=stop_after)
 
         elif args.command == "run":
             # Full pipeline
@@ -190,7 +240,8 @@ def main() -> None:
             meta = manager.create_job(file_path, config)
             job_id = meta.job_id
             
-            pipeline.run_all_stages(job_id, skip_transcript=args.skip_transcript)
+            stop_after = StageName(args.stop_after) if args.stop_after else None
+            pipeline.run_all_stages(job_id, skip_transcript=args.skip_transcript, stop_after=stop_after)
             return 0
 
         elif args.command == "watch":

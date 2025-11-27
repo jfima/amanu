@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List # Keep List if used, otherwise remove
+from typing import Any, Dict, List, Optional
 import logging
 
 from ..core.manager import JobManager
@@ -112,15 +112,15 @@ class Pipeline:
         self.job_manager = job_manager
         self.results_dir = results_dir
         
-    def run_all_stages(self, job_id: str, skip_transcript: bool = False) -> None:
-        """Run all stages in sequence."""
+    def run_all_stages(self, job_id: str, skip_transcript: bool = False, stop_after: Optional[StageName] = None) -> None:
+        """Run all stages in sequence, optionally stopping after a specific stage."""
         from .ingest import IngestStage
         from .scribe import ScribeStage
         from .refine import RefineStage
         from .generate import GenerateStage
         from .shelve import ShelveStage
         
-        logger.info(f"Starting pipeline for job {job_id} (Skip Transcript: {skip_transcript})")
+        logger.info(f"Starting pipeline for job {job_id} (Skip Transcript: {skip_transcript}, Stop After: {stop_after.value if stop_after else 'None'})")
 
         stage_order = [
             StageName.INGEST,
@@ -147,6 +147,11 @@ class Pipeline:
 
                 if current_stage_status == StageStatus.COMPLETED:
                     logger.info(f"Stage {current_stage_name.value} already completed. Skipping.")
+                    # Check if we should stop after this already-completed stage
+                    if stop_after and current_stage_name == stop_after:
+                        logger.info(f"Stopped after {stop_after.value} as requested")
+                        logger.info(f"Job {job_id} remains in work directory (not finalized)")
+                        return
                     continue
 
                 if current_stage_name == StageName.SCRIBE and skip_transcript:
@@ -162,11 +167,18 @@ class Pipeline:
                 logger.info(f"Running stage {current_stage_name.value}...")
                 stage_instance = stage_class_map[current_stage_name](self.job_manager)
                 stage_instance.run(job_id)
+                
+                # Check if we should stop after this stage
+                if stop_after and current_stage_name == stop_after:
+                    logger.info(f"Stopped after {stop_after.value} as requested")
+                    logger.info(f"Job {job_id} remains in work directory (not finalized)")
+                    return
+                    
             except Exception as e:
                 import traceback
                 logger.error(f"Pipeline failed at stage {current_stage_name.value}: {e}\n{traceback.format_exc()}")
                 raise
 
-        # 6. Finalize
+        # 6. Finalize (only if we didn't stop early)
         result_path = self.job_manager.finalize_job(job_id, self.results_dir)
         logger.info(f"Pipeline completed! Results at: {result_path}")

@@ -56,6 +56,26 @@ class ModelPricing(BaseModel):
 class ScribeConfig(BaseModel):
     retry_max: int = 3
     retry_delay_seconds: int = 5
+    provider: str = "gemini" # Default provider
+
+class StageConfig(BaseModel):
+    provider: str
+    model: str
+
+class GeminiConfig(BaseModel):
+    api_key: Optional[str] = None
+    models: List[ModelSpec] = Field(default_factory=list)
+
+class WhisperModelSpec(ModelSpec):
+    path: str
+
+class WhisperConfig(BaseModel):
+    whisper_home: Optional[str] = None  # Path to whisper.cpp directory
+    models: List[WhisperModelSpec] = Field(default_factory=list)
+
+class ClaudeConfig(BaseModel):
+    api_key: Optional[str] = None
+    models: List[ModelSpec] = Field(default_factory=list)
 
 class ArtifactConfig(BaseModel):
     plugin: str
@@ -94,20 +114,22 @@ class JobConfiguration(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig)
     debug: bool = False
     scribe: ScribeConfig = Field(default_factory=ScribeConfig)
-    transcribe: ModelSpec
-    refine: ModelSpec
+    transcribe: StageConfig
+    refine: StageConfig
 
 class ConfigContext(BaseModel):
     defaults: JobConfiguration
-    available_models: List[ModelSpec]
+    available_models: List[ModelSpec] # Keep for backward compatibility or general reference
+    providers: Dict[str, Any] = Field(default_factory=dict) # gemini -> GeminiConfig, etc.
     paths: PathsConfig = Field(default_factory=PathsConfig)
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
 
 class AudioMeta(BaseModel):
-    duration_seconds: Optional[float] = None
-    format: Optional[str] = None
-    bitrate: Optional[int] = None
-    file_size_bytes: Optional[int] = None
+    duration_seconds: float | None = None
+    format: str | None = None
+    bitrate: int | None = None
+    file_size_bytes: int | None = None
+    language: str | None = None
 
 class TokenStats(BaseModel):
     input: int = 0

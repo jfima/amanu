@@ -5,6 +5,25 @@ All notable changes to Amanu will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2025-11-27
+
+### 🏗️ Architecture Refactor
+
+This release addresses structural concerns by separating AI providers from output plugins and improving system robustness.
+
+### Changed
+- **File Structure**: Moved AI providers from `amanu/plugins/` to `amanu/providers/`.
+  - `amanu/providers/gemini.py`
+  - `amanu/providers/claude.py`
+  - `amanu/providers/whisper.py`
+- **Plugins**: `amanu/plugins/` now strictly contains output formatters (Markdown, PDF, SRT).
+- **Factory**: Updated `ProviderFactory` to load providers from the new location.
+
+### Added
+- **Global Error Logging**: Implemented a global exception handler (`sys.excepthook`) to ensure all crashes and unhandled exceptions are written to `logs/app.log`, preventing silent failures.
+
+---
+
 ## [0.1.2] - 2025-11-26
 
 ### 🎉 Major Architecture Refactor

@@ -1,0 +1,22 @@
+# Conversation Highlights
+
+> "{{ summary }}"
+
+## Voices
+{% if participants %}
+{% for p in participants %}
+*   {{ p }}
+{% endfor %}
+{% endif %}
+
+## Memorable Quotes
+{% if quotes %}
+{% for quote in quotes %}
+> "{{ quote.text }}"
+> -- {{ quote.speaker }}
+
+{% endfor %}
+{% endif %}
+
+## The Details
+{{ clean_text }}

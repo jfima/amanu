@@ -1,0 +1,19 @@
+================================================================================
+                                 DIALOGUE SCRIPT
+================================================================================
+
+PARTICIPANTS: {{ participants | join(', ') if participants else 'Unknown' }}
+TOPICS: {{ keywords | join(', ') if keywords else 'None' }}
+SENTIMENT: {{ sentiment | default('Unknown') }}
+
+--------------------------------------------------------------------------------
+
+{% if transcript_segments %}
+{% for segment in transcript_segments %}
+{{ segment.speaker_id | upper }}
+{{ segment.text }}
+
+{% endfor %}
+{% else %}
+(No transcript segments available)
+{% endif %}

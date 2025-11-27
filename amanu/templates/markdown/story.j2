@@ -1,0 +1,28 @@
+# The Story of the Conversation
+
+*Recorded on {{ date | default('a recent day') }}*
+
+## The Gist
+{{ summary }}
+
+## The Voices
+{% if participants %}
+Featuring {% for p in participants %}{{ p }}{% if not loop.last %}, {% endif %}{% endfor %}.
+{% endif %}
+
+## Echoes (Quotes)
+{% if quotes %}
+{% for quote in quotes %}
+### {{ quote.speaker }} said:
+> "{{ quote.text }}"
+
+{% endfor %}
+{% endif %}
+
+## The Narrative
+{{ clean_text }}
+
+## Themes
+{% if keywords %}
+*{{ keywords | join(' * ') }}*
+{% endif %}

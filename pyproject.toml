@@ -1,6 +1,6 @@
 [project]
 name = "amanu"
-version = "0.1.2"
+version = "0.1.3"
 description = "AI-powered amanuensis for your voice notes. Mp3 to Markdown with structure."
 authors = [
     {name = "User", email = "user@example.com"},
@@ -9,6 +9,8 @@ dependencies = [
     "google-generativeai",
     "pyyaml",
     "watchdog",
+    "rich",
+    "questionary",
 ]
 requires-python = ">=3.10"
 

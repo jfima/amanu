@@ -1,0 +1,22 @@
+# 🚀 Meeting Brief: {{ summary | truncate(50, True) }}
+
+**Date:** {{ date | default('Unknown') }} | **Language:** {{ language }}
+
+## 📌 Summary
+{{ summary }}
+
+## ✅ Action Items
+{% if action_items %}
+{% for item in action_items %}
+- [ ] **{{ item.assignee | default('Anyone') }}**: {{ item.task }}
+{% endfor %}
+{% else %}
+*No actions required.*
+{% endif %}
+
+## 💡 Top Insights
+{% if key_takeaways %}
+{% for item in key_takeaways %}
+*   {{ item }}
+{% endfor %}
+{% endif %}

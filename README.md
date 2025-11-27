@@ -1,287 +1,184 @@
-# Amanu: The Digital Amanuensis
+# Amanu: Your AI Amanuensis
 
-**Amanu** (short for Amanuensis) is your trusted AI scribe. It automatically processes voice media files (MP3, WAV, MP4) into structured, clean markdown transcripts using Google Gemini.
-
-In the spirit of the great amanuenses of history, it sits ready to capture your spoken words and commit them to the page. But unlike its human predecessors, this scribe never tires, never misses a word, and types at the speed of light.
-
-Feed it your voice notes, interviews, or ramblings, and watch as it weaves them into structured documents in multiple formats: **Markdown**, **PDF**, and **SRT subtitles**.
+Transform your voice notes into structured documents with AI. Simple, powerful, and built for everyone.
 
 ![Andrew Taylor Still with his amanuensis, Annie Morris, who is at a typewriter](./amanuensis.png)
 
-*Andrew Taylor Still, founder of osteopathy, with his amanuensis Annie Morris at the typewriter. A fitting metaphor: you speak, it crafts.*
+*Andrew Taylor Still with his amanuensis Annie Morris at the typewriter. You speak, Amanu writes.*
 
 ---
 
-## 🧠 How It Works
+## 🚀 Quick Start
 
-Amanu operates as a **5-stage pipeline**, treating your audio processing as a multi-stage "job" with full state management.
+### 1. Install
+
+```bash
+pip install -e .
+```
+
+### 2. Configure
+
+Run the interactive setup wizard:
+
+```bash
+amanu setup
+```
+
+The wizard will guide you through:
+- 🔑 Getting your Google Gemini API key
+- 🤖 Choosing the right AI model for your needs
+- 🌍 Setting your language preferences
+- 📁 Configuring output formats
+
+### 3. Process Your First File
+
+```bash
+amanu run your-audio.mp3
+```
+
+That's it! Find your transcripts in `scribe-out/`.
+
+---
+
+## 🏗️ How It Works
+
+Amanu processes your audio in **5 distinct stages**. This modular architecture allows you to pause, retry, or customize each step independently.
 
 ### The Pipeline
 
-```
-Audio File → INGEST → SCRIBE → REFINE → GENERATE → SHELVE → Results
-```
+1.  **Ingest**: Prepares your audio.
+    *   Converts to optimized format (OGG/Opus) to save bandwidth.
+    *   **Gemini Cache**: Large files are uploaded to Gemini's cache once, allowing multiple operations without re-uploading.
+2.  **Scribe**: Transcribes audio to text.
+    *   **Verbatim**: Produces a word-for-word transcript with timestamps and speaker IDs.
+    *   **Flexible**: You can skip this stage (`--skip-transcript`) if you only need a summary.
+3.  **Refine**: Analyzes the content.
+    *   Extracts summaries, action items, and key insights.
+    *   Uses the raw transcript or direct audio analysis.
+4.  **Generate**: Creates output files.
+    *   Uses plugins to create Markdown, PDF, SRT, or custom formats.
+5.  **Shelve**: Organizes the results.
+    *   Moves finished files to your library (`scribe-out/`), organized by date or topic.
 
-1. **INGEST** (Preparation)
-   - Analyzes audio metadata (duration, format, bitrate)
-   - Compresses to OGG Opus (24kbps) for optimal API efficiency
-   - Uploads to Gemini with smart caching (5+ min files)
+### 🧠 Smart Features
 
-2. **SCRIBE** (Transcription)
-   - Identifies speakers and assigns consistent names
-   - Generates time-aligned transcript with JSONL streaming
-   - Retry logic for API rate limits (429 errors)
-
-3. **REFINE** (Intelligence Extraction)
-   - Extracts structured data: summary, keywords, action items, quotes
-   - Two modes: **Standard** (high quality) or **Direct** (low cost, skips transcript)
-   - Outputs pure JSON data (no formatting)
-
-4. **GENERATE** (Multi-Format Output)
-   - Plugin-based architecture for extensibility
-   - Applies Jinja2 templates to create user artifacts
-   - Supports: Markdown, PDF, SRT subtitles
-
-5. **SHELVE** (Organization)
-   - Timeline mode: `YYYY/MM/DD/job_id/`
-   - Zettelkasten mode: ID-based naming with tag routing
-   - Configurable storage strategies
+*   **Gemini Caching**: For long recordings, Amanu uploads the file to Gemini's high-speed cache. This means you can ask for a summary, then a transcript, then a rewrite—all without waiting for the file to upload again.
+*   **Local Whisper Support**: Want privacy or free transcription? Amanu supports **Whisper.cpp**. It runs entirely on your machine.
+    *   *Note: Requires `whisper-cli` installed.*
+    *   [See Setup Guide](./docs/usage_guide.md#whisper-local) for instructions.
 
 ---
 
-## 🚀 Key Features
+## 📖 Documentation
 
-### Core Capabilities
-- ✅ **Multi-Format Output**: Markdown, PDF, SRT subtitles
-- ✅ **Large File Handling**: Process hours of audio in a single pass (2M token context)
-- ✅ **Context Caching**: Reduce latency and cost for long files
-- ✅ **Speaker Identification**: Automatic speaker detection and naming
-- ✅ **Job Management**: Track, retry, and resume failed jobs
-- ✅ **Watch Mode**: Auto-process files dropped in a folder
-- ✅ **Cost Tracking**: Detailed token usage and pricing reports
+**New to Amanu?** Start here:
+- [Windows 11 Setup Guide](./docs/getting-started-windows.md) - Complete walkthrough for Windows users
+- [macOS Setup Guide](./docs/getting-started-macos.md) - Complete walkthrough for Mac users
 
-### Advanced Features
-- ✅ **Direct Analysis Mode**: Skip transcription for cost savings (`--skip-transcript`)
-- ✅ **Configurable Compression**: Original, compressed, or optimized modes
-- ✅ **Template System**: Jinja2-based customizable output templates
-- ✅ **Plugin Architecture**: Easily add new output formats
-- ✅ **Retry Logic**: Automatic retry for API errors with configurable delays
+**Learn the features:**
+- [Core Features](./docs/features.md) - What Amanu can do
+- [Configuration Guide](./docs/configuration.md) - Customize your setup
+- [Templates & Plugins](./docs/customization.md) - Advanced customization
+
+**For developers:**
+- [Architecture](./docs/architecture_report.md) - System design
 
 ---
 
-## 🛠 Installation
+## ✨ Key Features
 
-### Requirements
-- **Python**: ≥3.10
-- **FFmpeg**: For audio processing
-- **ReportLab**: For PDF generation (optional: `pip install reportlab`)
+- **🎙️ Multi-Format Support**: MP3, WAV, MP4, M4A, and more
+- **📝 Rich Outputs**: Markdown, PDF, SRT subtitles
+- **🗣️ Speaker Detection**: Automatic speaker identification
+- **🌐 Multi-Language**: Auto-detect or force specific languages
+- **💰 Cost Tracking**: Know exactly what you're spending
+- **⚡ Watch Mode**: Auto-process files in a folder
 
-### Setup
+---
 
+## 💡 Common Use Cases
+
+### Meeting Minutes
 ```bash
-# Clone and install
-git clone https://github.com/jfima/amanu
-cd amanu
-pip install -e .
-
-# Configure
-cp config.example.yaml config.yaml
+amanu run meeting.mp3
 ```
+Get: Summary, action items, and full transcript
 
-Edit `config.yaml`:
-```yaml
-gemini:
-  api_key: "YOUR_GEMINI_API_KEY"
-  transcribe_model: "gemini-2.0-flash"
-  refine_model: "gemini-2.0-flash"
-
-processing:
-  language: "en"
-  compression_mode: "compressed"
-  debug: true
-  output:
-    artifacts:
-      - plugin: markdown
-        template: default
-        filename: "transcript"
-      - plugin: markdown
-        template: summary
-        filename: "summary"
-      - plugin: pdf
-        template: report
-      - plugin: srt
-        template: standard
-```
-
----
-
-## ⚡ Usage
-
-### Quick Start
+### Interview Transcription
 ```bash
-# Process a single file
-amanu run interview.mp3
+amanu run interview.wav --compression-mode optimized
+```
+Get: Speaker-separated transcript with timestamps
 
-# With options
-amanu run meeting.wav --compression-mode optimized --shelve-mode zettelkasten
-
-# Direct Analysis (skip transcript, lower cost)
+### Lecture Notes
+```bash
 amanu run lecture.m4a --skip-transcript
 ```
+Get: Summary and key points (lower cost)
 
-### Watch Mode (Magic Folder)
+---
+
+## 🛠️ Advanced Usage
+
+### Watch Mode (Auto-Process)
 ```bash
 amanu watch
 ```
-Drop files in `input/`, get results in `scribe-out/YYYY/MM/DD/`.
+Drop files into `scribe-in/`, get results in `scribe-out/`
 
-### Manual Pipeline Control
+### Job Management
 ```bash
-# Run individual stages
-amanu ingest audio.mp3          # Prepare audio
-amanu scribe [job_id]           # Transcribe
-amanu refine [job_id]           # Extract intelligence
-amanu shelve [job_id]           # Organize results
-
-# Job management
-amanu jobs list                 # List all jobs
-amanu jobs show <job_id>        # Inspect job details
-amanu jobs retry <job_id>       # Retry failed job
-amanu jobs cleanup --older-than 7  # Clean old jobs
-
-# Cost reporting
-amanu report --days 30          # Last 30 days usage
+amanu jobs list              # See all jobs
+amanu jobs show <job_id>     # Inspect details
+amanu jobs retry <job_id>    # Retry failed jobs
 ```
 
----
-
-## 📁 Output Structure
-
-```
-scribe-out/
-└── 2025/
-    └── 11/
-        └── 26/
-            └── 25-1126-143022_interview/
-                ├── transcript.md          # Full transcript
-                ├── summary.md             # Executive summary
-                ├── report.pdf             # PDF report
-                ├── standard.srt           # Subtitles
-                ├── media/
-                │   ├── original.mp3
-                │   └── compressed.ogg
-                ├── transcripts/
-                │   ├── raw_transcript.json
-                │   └── enriched_context.json
-                ├── _stages/               # Debug logs (if enabled)
-                │   ├── ingest.json
-                │   ├── scribe.json
-                │   ├── refine.json
-                │   ├── generate.json
-                │   └── shelve.json
-                ├── state.json
-                └── meta.json
+### Cost Reports
+```bash
+amanu report --days 30       # Usage for last 30 days
 ```
 
 ---
 
 ## 🎨 Customization
 
-### Templates
-Create custom Jinja2 templates in `amanu/templates/{plugin}/`:
+Edit `config.yaml` or use `amanu setup` to configure:
 
-```jinja2
-# templates/markdown/custom.j2
-# {{ summary }}
-
-## Key Points
-{% for item in key_takeaways %}
-- {{ item }}
-{% endfor %}
-
-## Full Text
-{{ clean_text }}
-```
-
-Update `config.yaml`:
-```yaml
-output:
-  artifacts:
-    - plugin: markdown
-      template: custom
-      filename: "my_output"
-```
-
-### Plugins
-Extend with custom output formats by implementing `BasePlugin`:
-
-```python
-from amanu.plugins.base import BasePlugin
-
-class MyPlugin(BasePlugin):
-    @property
-    def name(self) -> str:
-        return "myformat"
-    
-    def generate(self, context, template_content, output_path, **kwargs):
-        # Your custom logic
-        return output_path
-```
+- **Models**: Choose between speed (2.0 Flash) and quality (2.5 Pro)
+- **Languages**: Auto-detect or force specific language
+- **Output Formats**: Markdown, PDF, SRT, or custom templates
+- **Organization**: Timeline (by date) or Zettelkasten (flat)
 
 ---
 
-## 💰 Cost Estimation
+## 💰 Pricing
 
-Amanu tracks costs in real-time:
+Amanu uses Google Gemini API:
 
-| Model | Input ($/1M tokens) | Output ($/1M tokens) |
-|-------|---------------------|----------------------|
-| gemini-2.0-flash | $0.10 | $0.40 |
-| gemini-2.5-flash | $0.30 | $2.50 |
+| Model | Cost | Best For |
+|-------|------|----------|
+| Gemini 2.0 Flash | $0.10/1M tokens | Fast, everyday use |
+| Gemini 2.5 Flash | $0.30/1M tokens | Balanced quality |
+| Gemini 2.5 Pro | $1.25/1M tokens | Professional work |
 
-**Example**: 1-hour audio (~15K tokens) ≈ $0.01-0.05 depending on mode and model.
-
-Check `_stages/scribe.json` for detailed breakdowns.
-
----
-
-## 🗺 Roadmap
-
-- [ ] **Additional Plugins**: DOCX, HTML, LaTeX
-- [ ] **Multi-API Support**: OpenAI Whisper, Anthropic Claude
-- [ ] **Advanced Templates**: Blog posts, video scripts, meeting minutes
-- [ ] **Web UI**: Browser-based interface
-- [ ] **Batch Processing**: Process multiple files in parallel
-
----
-
-## 📚 Documentation
-
-- [Architecture Report](./docs/architecture_report.md) - Detailed system design
-- [Plugin Development](./docs/plugins.md) - Create custom output formats
-- [Template Guide](./docs/templates.md) - Customize output formatting
+**Example**: 1-hour audio ≈ $0.01-0.05
 
 ---
 
 ## 🤝 Contributing
 
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
+Contributions welcome! See our [Contributing Guide](./CONTRIBUTING.md).
 
 ---
 
 ## 📄 License
 
-MIT License - see LICENSE file for details.
+MIT License - see [LICENSE](./LICENSE) for details.
 
 ---
 
-## 🙏 Acknowledgments
+## 🙏 Built With
 
-Built with:
-- [Google Gemini](https://ai.google.dev/) - AI transcription and analysis
-- [ReportLab](https://www.reportlab.com/) - PDF generation
-- [Jinja2](https://jinja.palletsprojects.com/) - Template engine
+- [Google Gemini](https://ai.google.dev/) - AI transcription
+- [Rich](https://rich.readthedocs.io/) - Beautiful terminal UI
 - [FFmpeg](https://ffmpeg.org/) - Audio processing

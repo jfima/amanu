@@ -1,0 +1,22 @@
+# OFFICIAL TRANSCRIPT RECORD
+**Date:** {{ date | default('Unknown') }}
+
+## 1. SUMMARY
+{{ summary }}
+
+## 2. PARTICIPANTS
+{% if participants %}
+{% for p in participants %}
+- {{ p }}
+{% endfor %}
+{% endif %}
+
+## 3. KEY POINTS
+{% if key_takeaways %}
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+## 4. FULL TEXT
+{{ clean_text }}

@@ -1,0 +1,21 @@
+# {{ summary | default('Transcript Report') }}
+
+## Executive Summary
+{{ summary }}
+
+## Key Takeaways
+{% if key_takeaways %}
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+## Action Items
+{% if action_items %}
+{% for item in action_items %}
+- **{{ item.assignee | default('Unassigned') }}**: {{ item.task }}
+{% endfor %}
+{% endif %}
+
+## Transcript
+{{ clean_text }}

@@ -3,57 +3,59 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
-from .models import JobConfiguration, ModelPricing, PricingModel, ModelSpec, ModelContextWindow, ConfigContext
+from .models import (
+    JobConfiguration, ModelPricing, PricingModel, ModelSpec, ModelContextWindow, ConfigContext,
+    StageConfig, GeminiConfig, WhisperConfig, ClaudeConfig, WhisperModelSpec,
+    ScribeConfig, OutputConfig, ArtifactConfig, ShelveConfig, ZettelkastenConfig,
+    PathsConfig, CleanupConfig
+)
 
 DEFAULT_CONFIG = {
-    "gemini": {
-        "api_key": "",
-        "transcribe_model": "gemini-2.0-flash",
-        "refine_model": "gemini-2.0-flash",
+    "transcribe": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash"
+    },
+    "refine": {
+        "provider": "gemini",
+        "model": "gemini-2.0-flash"
+    },
+    "providers": {
+        "gemini": {
+            "api_key": "",
+            "models": [
+                {
+                    "name": "gemini-2.0-flash",
+                    "context_window": {"input_tokens": 1048576, "output_tokens": 8192},
+                    "cost_per_1M_tokens_usd": {"input": 0.10, "output": 0.40}
+                }
+            ]
+        },
+        "whisper": {
+            "models": []
+        },
+        "claude": {
+            "api_key": "",
+            "models": []
+        }
     },
     "processing": {
-        "context_window": 65000,
-        "language": "auto"
-    },
-    "shelve": {
-        "enabled": True,
-        "strategy": "timeline",
-        "zettelkasten": {
-            "id_format": "%Y%m%d%H%M",
-            "filename_pattern": "{id} {slug}.md"
+        "language": "auto",
+        "compression_mode": "compressed",
+        "debug": False,
+        "output": {
+            "artifacts": []
         }
     },
-    "pricing": {
-        "transcribe_model": {"input": 0.075, "output": 0.30},
-        "refine_model": {"input": 0.075, "output": 0.30}
+    "paths": {
+        "input": "./scribe-in",
+        "work": "./scribe-work",
+        "results": "./scribe-out"
     },
-    "gemini_models": [
-        {
-            "name": "gemini-3-pro-preview",
-            "context_window": {"input_tokens": 1048576, "output_tokens": 65536},
-            "cost_per_1M_tokens_usd": {"input": 2.0, "output": 12.0}
-        },
-        {
-            "name": "gemini-2.5-pro",
-            "context_window": {"input_tokens": 1048576, "output_tokens": 65536},
-            "cost_per_1M_tokens_usd": {"input": 1.25, "output": 10.0}
-        },
-        {
-            "name": "gemini-2.5-flash",
-            "context_window": {"input_tokens": 1048576, "output_tokens": 65536},
-            "cost_per_1M_tokens_usd": {"input": 0.30, "output": 2.50}
-        },
-        {
-            "name": "gemini-2.5-flash-lite",
-            "context_window": {"input_tokens": 1048576, "output_tokens": 65536},
-            "cost_per_1M_tokens_usd": {"input": 0.10, "output": 0.40}
-        },
-        {
-            "name": "gemini-2.0-flash",
-            "context_window": {"input_tokens": 1048576, "output_tokens": 8192},
-            "cost_per_1M_tokens_usd": {"input": 0.10, "output": 0.40}
-        }
-    ]
+    "cleanup": {
+        "failed_jobs_retention_days": 7,
+        "completed_jobs_retention_days": 1,
+        "auto_cleanup_enabled": True
+    }
 }
 
 def load_config(config_path: str = None) -> ConfigContext:
@@ -77,17 +79,27 @@ def load_config(config_path: str = None) -> ConfigContext:
             
     # 2. Env vars override
     if os.environ.get("GEMINI_API_KEY"):
-        config["gemini"]["api_key"] = os.environ["GEMINI_API_KEY"]
-    elif config["gemini"]["api_key"]:
+        # Ensure providers.gemini exists
+        if "providers" not in config:
+            config["providers"] = {}
+        if "gemini" not in config["providers"]:
+            config["providers"]["gemini"] = {}
+        config["providers"]["gemini"]["api_key"] = os.environ["GEMINI_API_KEY"]
+    elif config.get("providers", {}).get("gemini", {}).get("api_key"):
         # Export to env so other modules can use it
-        os.environ["GEMINI_API_KEY"] = config["gemini"]["api_key"]
+        os.environ["GEMINI_API_KEY"] = config["providers"]["gemini"]["api_key"]
         
-    # 3. Create ConfigContext
-    # Parse model specs
-    model_specs = []
-    if "gemini_models" in config:
-        for m in config["gemini_models"]:
-            model_specs.append(ModelSpec(
+    # 4. Parse Providers
+    providers = {}
+    
+    # Gemini - try new format first, then fall back to legacy
+    gemini_conf = config.get("providers", {}).get("gemini", {})
+    gemini_models_list = []
+    
+    # New format: providers.gemini.models
+    if gemini_conf.get("models"):
+        for m in gemini_conf["models"]:
+            gemini_models_list.append(ModelSpec(
                 name=m["name"],
                 context_window=ModelContextWindow(**m["context_window"]),
                 cost_per_1M_tokens_usd=PricingModel(
@@ -95,33 +107,95 @@ def load_config(config_path: str = None) -> ConfigContext:
                     output=m["cost_per_1M_tokens_usd"]["output"]
                 )
             ))
+    # Legacy format: top-level gemini_models
+    elif "gemini_models" in config:
+        for m in config["gemini_models"]:
+            gemini_models_list.append(ModelSpec(
+                name=m["name"],
+                context_window=ModelContextWindow(**m["context_window"]),
+                cost_per_1M_tokens_usd=PricingModel(
+                    input=m["cost_per_1M_tokens_usd"]["input"],
+                    output=m["cost_per_1M_tokens_usd"]["output"]
+                )
+            ))
+    
+    # Get API key from providers.gemini.api_key or legacy gemini.api_key
+    gemini_api_key = gemini_conf.get("api_key") or config.get("gemini", {}).get("api_key")
+    
+    providers["gemini"] = GeminiConfig(
+        api_key=gemini_api_key,
+        models=gemini_models_list
+    )
 
-    # Helper to find model by name
-    def get_model(name: str) -> ModelSpec:
-        for m in model_specs:
-            if m.name == name:
-                return m
-        # Fallback if not found in list but specified (should ideally fail or warn)
-        # For now creating a dummy spec with defaults if not found, or raise error
-        # Let's raise error to be safe, or use the first one as fallback?
-        # Better to raise error if config is inconsistent.
-        # But for bootstrap, let's look for exact match.
-        raise ValueError(f"Model {name} not found in gemini_models configuration.")
+    # Whisper
+    whisper_conf = config.get("providers", {}).get("whisper", {})
+    whisper_models_raw = whisper_conf.get("models", [])
+    whisper_models_list = []
+    
+    if isinstance(whisper_models_raw, dict):
+        # Legacy format: name -> path
+        for name, path in whisper_models_raw.items():
+            whisper_models_list.append(WhisperModelSpec(
+                name=name,
+                path=path,
+                context_window=ModelContextWindow(input_tokens=0, output_tokens=0),
+                cost_per_1M_tokens_usd=PricingModel(input=0.0, output=0.0)
+            ))
+    elif isinstance(whisper_models_raw, list):
+        # New format
+        for m in whisper_models_raw:
+             whisper_models_list.append(WhisperModelSpec(
+                name=m["name"],
+                path=m["path"],
+                context_window=ModelContextWindow(**m["context_window"]),
+                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
+            ))
+            
+    providers["whisper"] = WhisperConfig(
+        whisper_home=whisper_conf.get("whisper_home"),
+        models=whisper_models_list
+    )
 
-    try:
-        transcribe_spec = get_model(config["gemini"]["transcribe_model"])
-        refine_spec = get_model(config["gemini"]["refine_model"])
-    except ValueError as e:
-        # If default models are not in the list, this is a config error.
-        # Fallback to first available or hardcoded for safety?
-        if model_specs:
-             transcribe_spec = model_specs[0]
-             refine_spec = model_specs[0]
-        else:
-             raise ValueError("No models defined in gemini_models.")
+    # Claude
+    claude_conf = config.get("providers", {}).get("claude", {})
+    claude_models_list = []
+    
+    if claude_conf.get("models"):
+        for m in claude_conf["models"]:
+            claude_models_list.append(ModelSpec(
+                name=m["name"],
+                context_window=ModelContextWindow(**m["context_window"]),
+                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
+            ))
+    
+    providers["claude"] = ClaudeConfig(
+        api_key=claude_conf.get("api_key"),
+        models=claude_models_list
+    )
+
+    # 5. Parse Stages (Transcribe / Refine)
+    # Backward compatibility: if top-level transcribe/refine missing, use gemini legacy
+    
+    transcribe_conf = config.get("transcribe", {})
+    if not transcribe_conf.get("provider"):
+        # Fallback to legacy gemini config
+        transcribe_conf = {
+            "provider": "gemini",
+            "model": config["gemini"].get("transcribe_model", "gemini-2.0-flash")
+        }
+        
+    refine_conf = config.get("refine", {})
+    if not refine_conf.get("provider"):
+         # Fallback to legacy gemini config
+        refine_conf = {
+            "provider": "gemini",
+            "model": config["gemini"].get("refine_model", "gemini-2.0-flash")
+        }
+
+    transcribe_stage = StageConfig(**transcribe_conf)
+    refine_stage = StageConfig(**refine_conf)
 
     # Load scribe config
-    from .models import ScribeConfig, OutputConfig, ArtifactConfig, ShelveConfig, ZettelkastenConfig
     scribe_config_dict = config["processing"].get("scribe", {})
     scribe_config = ScribeConfig(
         retry_max=scribe_config_dict.get("retry_max", 3),
@@ -166,18 +240,18 @@ def load_config(config_path: str = None) -> ConfigContext:
         output=output_config,
         debug=config["processing"].get("debug", False),
         scribe=scribe_config,
-        transcribe=transcribe_spec,
-        refine=refine_spec
+        transcribe=transcribe_stage,
+        refine=refine_stage
     )
 
     # Load paths config
-    from .models import PathsConfig, CleanupConfig
     paths_config = PathsConfig(**config.get("paths", {}))
     cleanup_config = CleanupConfig(**config.get("cleanup", {}))
 
     return ConfigContext(
         defaults=defaults,
-        available_models=model_specs,
+        available_models=gemini_models_list, # Legacy support
+        providers=providers,
         paths=paths_config,
         cleanup=cleanup_config
     )

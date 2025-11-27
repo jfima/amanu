@@ -11,6 +11,7 @@ from google.generativeai import caching
 
 from .base import BaseStage
 from ..core.models import JobMeta, StageName, AudioMeta
+from ..core.factory import ProviderFactory
 
 logger = logging.getLogger("Amanu.Ingest")
 
@@ -22,8 +23,7 @@ class IngestStage(BaseStage):
         Analyze, Compress, and Upload audio.
         Combines previous Scout and Prep stages.
         """
-        # Configure Gemini
-        self._configure_gemini(meta.configuration.transcribe.name)
+
 
         # 1. Locate Original File
         media_dir = job_dir / "media"
@@ -40,44 +40,74 @@ class IngestStage(BaseStage):
         # Estimate tokens (conservative 15 tokens/sec for output limit check)
         estimated_output_tokens = int(audio_meta.duration_seconds * 15)
         
-        # 3. Compress/Optimize (Prep Logic)
-        strategy = self._get_compression_strategy(original_file, meta.configuration.compression_mode)
+        # Determine Provider Requirements
+        provider_name = meta.configuration.transcribe.provider
+        provider_cls = ProviderFactory.get_provider_class(provider_name)
+        specs = provider_cls.get_ingest_specs()
         
-        if strategy['needs_conversion']:
-            logger.info(f"Compressing to OGG (mode: {meta.configuration.compression_mode})...")
-            compressed_file = job_dir / "media" / "compressed.ogg"
-            self._compress_file(original_file, compressed_file)
-            upload_file = compressed_file
-            compression_method = "compressed"
+        logger.info(f"Ingest for provider: {provider_name} (Format: {specs.target_format}, Upload: {specs.requires_upload})")
+
+        # 3. Convert/Optimize
+        # Check if conversion is needed based on provider specs OR compression mode
+        # If provider needs WAV, we MUST convert to WAV regardless of compression mode
+        
+        target_ext = f".{specs.target_format}"
+        needs_conversion = (original_file.suffix.lower() != target_ext) or \
+                           (meta.configuration.compression_mode in ['compressed', 'optimized'])
+        
+        prepared_file = original_file
+        if needs_conversion:
+            logger.info(f"Converting to {specs.target_format}...")
+            prepared_file = job_dir / "media" / f"prepared{target_ext}"
+            self._convert_file(original_file, prepared_file, specs.target_format)
+            compression_method = f"converted_{specs.target_format}"
         else:
-            logger.info("Using original file (no compression needed)...")
-            upload_file = original_file
+            logger.info("Using original file...")
             compression_method = "original"
 
-        # 4. Upload to Gemini
-        # Decision: Cache or Direct?
-        # For now, we default to Cache for reliability with long files, 
-        # unless file is very small (< 5 mins) where cache might be overkill/error-prone.
-        
-        use_cache = audio_meta.duration_seconds > 300 # 5 minutes
-        
-        cache_name = None
-        file_uri = None
-        file_name = None
-        
-        if use_cache:
-            logger.info("Uploading and creating Context Cache...")
-            try:
-                cache_name, file_name, file_uri = self._create_cache(upload_file, meta.configuration.transcribe.name)
-            except Exception as e:
-                logger.warning(f"Cache creation failed ({e}). Falling back to direct upload.")
-                use_cache = False
-        
-        if not use_cache:
-            logger.info("Uploading for Direct Processing...")
-            file_obj = self._upload_direct(upload_file)
-            file_name = file_obj.name
-            file_uri = file_obj.uri
+        # 4. Upload (if required)
+        gemini_data = {}
+        if specs.requires_upload and specs.upload_target == "gemini_cache":
+            # Gemini Logic
+            # Ensure Gemini is configured
+            gemini_config = self.manager.providers.get("gemini")
+            if gemini_config and gemini_config.api_key:
+                genai.configure(api_key=gemini_config.api_key)
+            else:
+                # Try env var
+                import os
+                api_key = os.environ.get("GEMINI_API_KEY")
+                if api_key:
+                    genai.configure(api_key=api_key)
+                else:
+                    logger.warning("Gemini API Key not found. Upload might fail.")
+
+            use_cache = audio_meta.duration_seconds > 300 # 5 minutes
+            
+            cache_name = None
+            file_uri = None
+            file_name = None
+            
+            if use_cache:
+                logger.info("Uploading and creating Context Cache...")
+                try:
+                    cache_name, file_name, file_uri = self._create_cache(prepared_file, meta.configuration.transcribe.model)
+                except Exception as e:
+                    logger.warning(f"Cache creation failed ({e}). Falling back to direct upload.")
+                    use_cache = False
+            
+            if not use_cache:
+                logger.info("Uploading for Direct Processing...")
+                file_obj = self._upload_direct(prepared_file)
+                file_name = file_obj.name
+                file_uri = file_obj.uri
+                
+            gemini_data = {
+                "file_name": file_name,
+                "file_uri": file_uri,
+                "cache_name": cache_name,
+                "using_cache": bool(cache_name)
+            }
 
         # 5. Result
         return {
@@ -85,14 +115,10 @@ class IngestStage(BaseStage):
             "audio_meta": audio_meta.model_dump(),
             "compression": {
                 "method": compression_method,
-                "file": str(upload_file.relative_to(job_dir))
+                "file": str(prepared_file.relative_to(job_dir))
             },
-            "gemini": {
-                "file_name": file_name,
-                "file_uri": file_uri,
-                "cache_name": cache_name,
-                "using_cache": bool(cache_name)
-            }
+            "local_file_path": str(prepared_file), # Generic path for local providers
+            "gemini": gemini_data
         }
 
     def _analyze_audio(self, filepath: Path) -> AudioMeta:
@@ -132,15 +158,28 @@ class IngestStage(BaseStage):
             logger.warning(f"Failed to analyze audio: {e}")
             return AudioMeta(duration_seconds=0.0)
 
-    def _get_compression_strategy(self, file_path: Path, mode: str) -> dict:
-        """Determine compression strategy."""
-        video_exts = {'.mp4', '.mov', '.mkv', '.webm'}
-        is_video = file_path.suffix.lower() in video_exts
+    def _convert_file(self, input_path: Path, output_path: Path, format: str) -> None:
+        """Convert audio to target format."""
+        cmd = ['ffmpeg', '-y', '-v', 'error', '-i', str(input_path)]
         
-        return {
-            'needs_conversion': is_video or mode in ['compressed', 'optimized'],
-            'output_format': 'ogg'
-        }
+        if format == "ogg":
+            cmd.extend([
+                '-vn', '-map_metadata', '-1', '-ac', '1', 
+                '-c:a', 'libopus', '-b:a', '24k', '-application', 'voip'
+            ])
+        elif format == "wav":
+            cmd.extend([
+                '-vn', '-map_metadata', '-1', '-ac', '1',
+                '-ar', '16000', '-c:a', 'pcm_s16le'
+            ])
+        elif format == "mp3":
+             cmd.extend([
+                '-vn', '-map_metadata', '-1', '-ac', '1',
+                '-c:a', 'libmp3lame', '-q:a', '4' 
+            ])
+        
+        cmd.append(str(output_path))
+        subprocess.run(cmd, check=True)
 
     def _create_cache(self, file_path: Path, model_name: str) -> tuple[str | None, str, str]:
         """Upload and create cache. Returns (cache_name, file_name, file_uri)."""
@@ -174,20 +213,7 @@ class IngestStage(BaseStage):
             else:
                 raise e
 
-    def _compress_file(self, input_path: Path, output_path: Path, start_time: str | None = None, duration: str | None = None) -> None:
-        """Convert to OGG Opus."""
-        cmd = [
-            'ffmpeg', '-y', '-v', 'error', 
-            '-i', str(input_path),
-            '-vn',                 # No video
-            '-map_metadata', '-1', # Strip metadata
-            '-ac', '1',            # Mono
-            '-c:a', 'libopus',     # Opus codec
-            '-b:a', '24k',         # Low bitrate
-            '-application', 'voip',
-            str(output_path)
-        ]
-        subprocess.run(cmd, check=True)
+
 
     def _upload_direct(self, file_path: Path):
         """Upload file for direct use (no cache)."""

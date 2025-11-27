@@ -1,0 +1,72 @@
+# {{ summary | default('Transcript Report') }}
+
+## 📋 Metadata
+- **Date**: {{ date | default('Unknown') }}
+- **Duration**: {{ duration | default('Unknown') }}
+- **Language**: {{ language | default('Unknown') }}
+- **Sentiment**: {{ sentiment | default('Neutral') }}
+
+---
+
+## 👥 Participants
+{% if participants %}
+{% for p in participants %}
+- **{{ p }}**
+{% endfor %}
+{% else %}
+- *No participants identified*
+{% endif %}
+
+---
+
+## 📝 Executive Summary
+{{ summary }}
+
+---
+
+## 🔑 Key Takeaways
+{% if key_takeaways %}
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+---
+
+## ⚡ Action Items
+{% if action_items %}
+| Task | Assignee |
+|------|----------|
+{% for item in action_items %}
+| {{ item.task }} | {{ item.assignee | default('Unassigned') }} |
+{% endfor %}
+{% else %}
+*No action items detected.*
+{% endif %}
+
+---
+
+## 💬 Memorable Quotes
+{% if quotes %}
+{% for quote in quotes %}
+> "{{ quote.text }}"
+> — *{{ quote.speaker }}*
+
+{% endfor %}
+{% endif %}
+
+---
+
+## 🏷️ Keywords
+{% if keywords %}
+{{ keywords | join(' • ') }}
+{% endif %}
+
+---
+
+## 📜 Full Transcript
+{% if clean_text %}
+{{ clean_text }}
+{% else %}
+*Transcript not available.*
+{% endif %}

@@ -1,81 +1,91 @@
-gemini:
-  api_key: ""  # Your Gemini API key (or set GEMINI_API_KEY environment variable)
-  transcribe_model: "gemini-2.0-flash"
-  refine_model: "gemini-2.0-flash"
+# Amanu Configuration
 
+# --- Stage Configuration ---
+# Define which provider and model to use for each stage.
+transcribe:
+  provider: "gemini" # Options: "gemini", "whisper", "claude"
+  model: "gemini-2.0-flash"
+
+refine:
+  provider: "gemini" # Options: "gemini" (Claude coming soon)
+  model: "gemini-2.0-flash"
+
+# --- Provider Configuration ---
+providers:
+  gemini:
+    api_key: "YOUR_GEMINI_API_KEY" # Or set GEMINI_API_KEY env var
+    models:
+      - name: "gemini-3-pro-preview"
+        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
+        cost_per_1M_tokens_usd: {"input": 2.0, "output": 12.0}
+      - name: "gemini-2.5-pro"
+        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
+        cost_per_1M_tokens_usd: {"input": 1.25, "output": 10.0}
+      - name: "gemini-2.5-flash"
+        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
+        cost_per_1M_tokens_usd: {"input": 0.30, "output": 2.50}
+      - name: "gemini-2.0-flash"
+        context_window: {input_tokens: 1048576, output_tokens: 8192}
+        cost_per_1M_tokens_usd: {input: 0.10, output: 0.40}
+
+  whisper:
+    whisper_home: null  # Optional: Path to whisper.cpp directory (auto-detected if null)
+    models:
+      - name: "tiny"
+        path: "models/ggml-tiny.bin"
+        context_window: {input_tokens: 2048, output_tokens: 2048} # ~10 mins audio
+        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+      - name: "base"
+        path: "models/ggml-base.bin"
+        context_window: {input_tokens: 2048, output_tokens: 2048}
+        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+      - name: "small"
+        path: "models/ggml-small.bin"
+        context_window: {input_tokens: 2048, output_tokens: 2048}
+        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+      - name: "medium"
+        path: "models/ggml-medium.bin"
+        context_window: {input_tokens: 2048, output_tokens: 2048}
+        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+      - name: "large-v3"
+        path: "models/ggml-large-v3.bin"
+        context_window: {input_tokens: 2048, output_tokens: 2048}
+        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+
+  claude:
+    api_key: "YOUR_ANTHROPIC_API_KEY" # Or set ANTHROPIC_API_KEY env var
+    models:
+      - name: "claude-3-5-sonnet-20241022"
+        context_window: {input_tokens: 200000, output_tokens: 8192}
+        cost_per_1M_tokens_usd: {input: 3.00, output: 15.00}
+
+# --- General Settings ---
 processing:
-  language: "auto"  # Language code (e.g., "en", "ru") or "auto" for detection
-  compression_mode: "compressed"  # Options: original, compressed, optimized
-  shelve_mode: "timeline"  # Options: timeline (YYYY/MM/DD), zettelkasten (flat)
-  debug: false  # Enable debug logging and keep _stages/ folder
-  
-  # Multi-format output configuration
+  language: "auto"
+  compression_mode: "compressed" # "original", "compressed", "optimized"
+  shelve_mode: "timeline" # "timeline", "zettelkasten"
+  debug: false
   output:
     artifacts:
       - plugin: markdown
-        template: default  # Full transcript
-        filename: "transcript"  # Optional custom filename
+        template: default
+        filename: "transcript"
       - plugin: markdown
-        template: summary  # Executive summary
+        template: summary
         filename: "summary"
       - plugin: pdf
-        template: report  # PDF report (requires: pip install reportlab)
+        template: report
       - plugin: srt
-        template: standard  # Subtitles (not available in Direct Analysis mode)
-  
-  # Scribe stage configuration
-  scribe:
-    retry_max: 3  # Max retries for API errors
-    retry_delay_seconds: 5  # Delay between retries
+        template: standard
+      - plugin: txt
+        template: default      # timestamped, script
 
 paths:
-  input: "./input"  # Watch mode input directory
-  work: "./scribe-work"  # Temporary job processing directory
-  results: "./scribe-out"  # Final output directory
+  input: "./scribe-in"
+  work: "./scribe-work"
+  results: "./scribe-out"
 
 cleanup:
-  failed_jobs_retention_days: 7  # Auto-delete failed jobs after N days
-  completed_jobs_retention_days: 1  # Auto-delete completed jobs after N days
-  auto_cleanup_enabled: true  # Enable automatic cleanup
-
-# Available Gemini models with pricing
-gemini_models:
-  - name: "gemini-3-pro-preview"
-    context_window:
-      input_tokens: 1048576
-      output_tokens: 65536
-    cost_per_1M_tokens_usd:
-      input: 2.0
-      output: 12.0
-  
-  - name: "gemini-2.5-pro"
-    context_window:
-      input_tokens: 1048576
-      output_tokens: 65536
-    cost_per_1M_tokens_usd:
-      input: 1.25
-      output: 10.0
-  
-  - name: "gemini-2.5-flash"
-    context_window:
-      input_tokens: 1048576
-      output_tokens: 65536
-    cost_per_1M_tokens_usd:
-      input: 0.30
-      output: 2.50
-  
-  - name: "gemini-2.5-flash-lite"
-    context_window:
-      input_tokens: 1048576
-      output_tokens: 65536
-    cost_per_1M_tokens_usd:
-      input: 0.10
-      output: 0.40
-  
-  - name: "gemini-2.0-flash"
-    context_window:
-      input_tokens: 1048576
-      output_tokens: 8192
-    cost_per_1M_tokens_usd:
-      input: 0.10
-      output: 0.40
+  failed_jobs_retention_days: 7
+  completed_jobs_retention_days: 1
+  auto_cleanup_enabled: true
