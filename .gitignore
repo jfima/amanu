@@ -1,5 +1,6 @@
 # Configuration with sensitive data
 config.yaml
+configtmp.yaml
 
 # Python
 __pycache__/
