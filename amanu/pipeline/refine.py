@@ -9,7 +9,7 @@ from google.generativeai import caching
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 from .base import BaseStage
-from ..core.models import JobMeta, StageName
+from ..core.models import JobObject, StageName
 from ..core.factory import ProviderFactory
 
 logger = logging.getLogger("Amanu.Refine")
@@ -17,7 +17,42 @@ logger = logging.getLogger("Amanu.Refine")
 class RefineStage(BaseStage):
     stage_name = StageName.REFINE
 
-    def execute(self, job_dir: Path, meta: JobMeta, **kwargs) -> Dict[str, Any]:
+    def validate_prerequisites(self, job_dir: Path, job: JobObject) -> None:
+        """
+        Validate prerequisites for refine stage.
+        """
+        # Check for standard mode input (transcript)
+        raw_transcript_file = None
+        if job.raw_transcript_file:
+            raw_transcript_file = job_dir / job.raw_transcript_file
+        else:
+            raw_transcript_file = job_dir / "transcripts" / "raw_transcript.json"
+        
+        # Check for direct mode input (ingest result)
+        ingest_result = job.ingest_result
+        
+        has_transcript = raw_transcript_file and raw_transcript_file.exists()
+        has_ingest = ingest_result is not None
+        
+        if not has_transcript and not has_ingest:
+            raise ValueError(
+                f"Cannot run 'refine' stage: no input data found.\n"
+                f"Either run 'scribe' stage first (transcript mode) or ensure 'ingest' stage completed (direct mode).\n"
+                f"Missing files:\n"
+                f"  - Transcript: {raw_transcript_file}\n"
+                f"  - Ingest result: {'Present' if has_ingest else 'Missing'}"
+            )
+        
+        # Additional check for direct mode
+        if has_ingest and not has_transcript:
+            # Direct mode - check language configuration
+            if job.configuration.language == 'auto' and not job.audio.language:
+                logger.warning(
+                    f"Language not specified for direct audio analysis. "
+                    f"Consider setting language in configuration or running 'scribe' stage first."
+                )
+
+    def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
         Refine transcript and generate structured data (Enriched Context).
         Supports two modes:
@@ -27,34 +62,75 @@ class RefineStage(BaseStage):
 
         
         # Determine Input Mode
-        raw_transcript_file = job_dir / "transcripts" / "raw_transcript.json"
-        ingest_file = job_dir / "_stages" / "ingest.json"
+        # Check JobObject first
+        raw_transcript_file = None
+        if job.raw_transcript_file:
+            raw_transcript_file = job_dir / job.raw_transcript_file
+        else:
+            # Fallback
+            raw_transcript_file = job_dir / "transcripts" / "raw_transcript.json"
+            
+        ingest_result = job.ingest_result
         
         input_data = None
         mode = "unknown"
         
-        if raw_transcript_file.exists():
+        if raw_transcript_file and raw_transcript_file.exists():
             logger.info("Mode: Standard (Text Analysis)")
             mode = "standard"
             with open(raw_transcript_file, "r") as f:
                 input_data = json.load(f)
-        elif ingest_file.exists():
+        elif ingest_result:
             logger.info("Mode: Direct Analysis (Audio Processing)")
             mode = "direct"
-            with open(ingest_file, "r") as f:
-                input_data = json.load(f)
+            input_data = ingest_result
         else:
-            raise FileNotFoundError("No input found. Run Scribe (for Standard) or Ingest (for Direct).")
+            # Fallback to file check for ingest
+            ingest_file = job_dir / "_stages" / "ingest.json"
+            if ingest_file.exists():
+                logger.info("Mode: Direct Analysis (Audio Processing) [Fallback]")
+                mode = "direct"
+                with open(ingest_file, "r") as f:
+                    input_data = json.load(f)
+            else:
+                raise FileNotFoundError("No input found. Run Scribe (for Standard) or Ingest (for Direct).")
 
         # Generate Enriched Context
-        provider_name = meta.configuration.refine.provider
+        provider_name = job.configuration.refine.provider
         logger.info(f"Using refinement provider: {provider_name}")
         
         provider_config = self.manager.providers.get(provider_name)
-        provider = ProviderFactory.create_refinement_provider(provider_name, meta.configuration, provider_config)
+        provider = ProviderFactory.create_refinement_provider(provider_name, job.configuration, provider_config)
+        
+        # Get detected language from JobObject
+        detected_language = job.audio.language
+        if detected_language:
+            logger.info(f"Using detected language context: {detected_language}")
+            
+        # Load templates to find custom fields
+        from ..core.templates import load_template, parse_template
+        
+        custom_schema_fields = {}
+        
+        for artifact_config in job.configuration.output.artifacts:
+            plugin_name = artifact_config.plugin
+            template_name = artifact_config.template
+            
+            content, _ = load_template(plugin_name, template_name)
+            if content:
+                metadata, _ = parse_template(content)
+                if "custom_fields" in metadata:
+                    logger.info(f"Found custom fields in template '{template_name}': {list(metadata['custom_fields'].keys())}")
+                    custom_schema_fields.update(metadata["custom_fields"])
         
         try:
-            result = provider.refine(input_data, mode)
+            # Pass detected_language and custom_schema to refine
+            result = provider.refine(
+                input_data, 
+                mode, 
+                language=detected_language,
+                custom_schema=custom_schema_fields
+            )
             result_data = result.get("result", {})
             usage = result.get("usage")
         except Exception as e:
@@ -68,10 +144,12 @@ class RefineStage(BaseStage):
         with open(context_file, "w") as f:
             json.dump(result_data, f, indent=2, ensure_ascii=False)
             
-        # Update Meta
+        # Update Job Object
+        job.enriched_context_file = str(context_file.relative_to(job_dir))
+            
         if usage:
-            meta.processing.total_tokens.input += usage.prompt_token_count
-            meta.processing.total_tokens.output += usage.candidates_token_count
+            job.processing.total_tokens.input += usage.prompt_token_count
+            job.processing.total_tokens.output += usage.candidates_token_count
             
             input_tokens = usage.prompt_token_count
             output_tokens = usage.candidates_token_count
@@ -79,14 +157,14 @@ class RefineStage(BaseStage):
             input_tokens = 0
             output_tokens = 0
         
-        meta.processing.request_count += 1
-        meta.processing.steps.append({
+        job.processing.request_count += 1
+        job.processing.steps.append({
             "stage": "refine",
             "step": "analysis",
             "mode": mode,
             "provider": provider_name,
             "timestamp": datetime.now().isoformat(),
-            "model": meta.configuration.refine.model,
+            "model": job.configuration.refine.model,
             "tokens": {
                 "input": input_tokens,
                 "output": output_tokens
@@ -95,7 +173,7 @@ class RefineStage(BaseStage):
         
         # Calculate cost - get pricing from provider model spec
         pricing = None
-        model_name = meta.configuration.refine.model
+        model_name = job.configuration.refine.model
         
         if hasattr(provider_config, 'models') and provider_config.models:
             for model_spec in provider_config.models:
@@ -110,13 +188,13 @@ class RefineStage(BaseStage):
              cost = 0.0
              logger.warning(f"No pricing info for model {model_name}, cost set to 0.0")
              
-        meta.processing.total_cost_usd += cost
+        job.processing.total_cost_usd += cost
         
         return {
             "enriched_context_file": str(context_file),
             "mode": mode,
             "provider": provider_name,
-            "model": meta.configuration.refine.model,
+            "model": job.configuration.refine.model,
             "tokens": {
                 "input": input_tokens,
                 "output": output_tokens

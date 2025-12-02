@@ -1,3 +1,21 @@
+---
+custom_fields:
+  summary:
+    description: "A concise executive summary of the transcript."
+    structure: "string"
+  participants:
+    description: "List of real names of participants identified in the conversation."
+    structure: ["string"]
+  quotes:
+    description: "3-5 most memorable or significant verbatim quotes."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          speaker: {type: string}
+          text: {type: string}
+---
 # Conversation Highlights
 
 > "{{ summary }}"
@@ -19,4 +37,3 @@
 {% endif %}
 
 ## The Details
-{{ clean_text }}

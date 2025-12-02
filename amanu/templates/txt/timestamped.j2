@@ -1,3 +1,12 @@
+---
+custom_fields:
+  date:
+    description: "The date of the conversation or 'Unknown'."
+    structure: "string"
+  participants:
+    description: "List of real names of participants identified in the conversation."
+    structure: ["string"]
+---
 TRANSCRIPT (TIMESTAMPED)
 ================================================================================
 Date: {{ date | default('Unknown') }}

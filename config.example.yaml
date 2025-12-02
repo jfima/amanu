@@ -60,11 +60,12 @@ providers:
         cost_per_1M_tokens_usd: {input: 3.00, output: 15.00}
 
 # --- General Settings ---
+debug: false
+
 processing:
   language: "auto"
   compression_mode: "compressed" # "original", "compressed", "optimized"
   shelve_mode: "timeline" # "timeline", "zettelkasten"
-  debug: false
   output:
     artifacts:
       - plugin: markdown

@@ -5,9 +5,9 @@ from typing import Dict, Any
 
 from .models import (
     JobConfiguration, ModelPricing, PricingModel, ModelSpec, ModelContextWindow, ConfigContext,
-    StageConfig, GeminiConfig, WhisperConfig, ClaudeConfig, WhisperModelSpec,
+    StageConfig, GeminiConfig, WhisperConfig, ClaudeConfig, ZaiConfig, WhisperModelSpec,
     ScribeConfig, OutputConfig, ArtifactConfig, ShelveConfig, ZettelkastenConfig,
-    PathsConfig, CleanupConfig
+    PathsConfig, CleanupConfig, WhisperXModelSpec, WhisperXConfig
 )
 
 DEFAULT_CONFIG = {
@@ -36,12 +36,24 @@ DEFAULT_CONFIG = {
         "claude": {
             "api_key": "",
             "models": []
+        },
+        "whisperx": {
+            "device": "cuda",
+            "compute_type": "float16",
+            "batch_size": 16,
+            "models": [
+                {
+                    "name": "large-v2",
+                    "context_window": {"input_tokens": 0, "output_tokens": 0},
+                    "cost_per_1M_tokens_usd": {"input": 0.0, "output": 0.0}
+                }
+            ]
         }
     },
+    "debug": False,
     "processing": {
         "language": "auto",
         "compression_mode": "compressed",
-        "debug": False,
         "output": {
             "artifacts": []
         }
@@ -63,8 +75,11 @@ def load_config(config_path: str = None) -> ConfigContext:
     config = DEFAULT_CONFIG.copy()
     
     # 1. Load from file
+    # Search in: current dir, package dir, user config dir
+    package_config = Path(__file__).parent.parent.parent / "config.yaml"
     paths_to_check = [
         Path("config.yaml"),
+        package_config,
         Path.home() / ".config" / "amanu" / "config.yaml"
     ]
     if config_path:
@@ -173,6 +188,46 @@ def load_config(config_path: str = None) -> ConfigContext:
         models=claude_models_list
     )
 
+    # Zai
+    zai_conf = config.get("providers", {}).get("zai", {})
+    zai_models_list = []
+    
+    if zai_conf.get("models"):
+        for m in zai_conf["models"]:
+            zai_models_list.append(ModelSpec(
+                name=m["name"],
+                context_window=ModelContextWindow(**m["context_window"]),
+                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
+            ))
+    
+    providers["zai"] = ZaiConfig(
+        api_key=zai_conf.get("api_key"),
+        models=zai_models_list
+    )
+
+    # WhisperX
+    whisperx_conf = config.get("providers", {}).get("whisperx", {})
+    whisperx_models_list = []
+    
+    if whisperx_conf.get("models"):
+        for m in whisperx_conf["models"]:
+            whisperx_models_list.append(WhisperXModelSpec(
+                name=m["name"],
+                context_window=ModelContextWindow(**m["context_window"]),
+                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
+            ))
+            
+    providers["whisperx"] = WhisperXConfig(
+        python_executable=whisperx_conf.get("python_executable", "python3"),
+        device=whisperx_conf.get("device", "cuda"),
+        compute_type=whisperx_conf.get("compute_type", "float16"),
+        batch_size=whisperx_conf.get("batch_size", 16),
+        language=whisperx_conf.get("language"),
+        enable_diarization=whisperx_conf.get("enable_diarization", False),
+        hf_token=whisperx_conf.get("hf_token"),
+        models=whisperx_models_list
+    )
+
     # 5. Parse Stages (Transcribe / Refine)
     # Backward compatibility: if top-level transcribe/refine missing, use gemini legacy
     
@@ -238,7 +293,7 @@ def load_config(config_path: str = None) -> ConfigContext:
         compression_mode=config["processing"].get("compression_mode", "compressed"),
         shelve=shelve_config,
         output=output_config,
-        debug=config["processing"].get("debug", False),
+        debug=config.get("debug", False),
         scribe=scribe_config,
         transcribe=transcribe_stage,
         refine=refine_stage

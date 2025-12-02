@@ -8,7 +8,7 @@ from datetime import datetime
 import unicodedata
 
 from .base import BaseStage
-from ..core.models import JobMeta, StageName, ShelveConfig
+from ..core.models import JobObject, StageName, ShelveConfig
 
 logger = logging.getLogger("Amanu.Shelve")
 
@@ -115,11 +115,38 @@ class Router:
 class ShelveStage(BaseStage):
     stage_name = StageName.SHELVE
 
-    def execute(self, job_dir: Path, meta: JobMeta, **kwargs) -> Dict[str, Any]:
+    def validate_prerequisites(self, job_dir: Path, job: JobObject) -> None:
+        """
+        Validate prerequisites for shelve stage.
+        """
+        # Check that generate stage completed successfully
+        if not job.final_document_files:
+            # Try to find artifacts as fallback
+            transcripts_dir = job_dir / "transcripts"
+            if not transcripts_dir.exists():
+                raise ValueError(
+                    f"Cannot run 'shelve' stage: no documents found.\n"
+                    f"Please run 'generate' stage first."
+                )
+            
+            # Look for any non-system files
+            artifacts_found = False
+            for f in transcripts_dir.iterdir():
+                if f.name not in ["raw_transcript.json", "enriched_context.json", "analysis.json"]:
+                    artifacts_found = True
+                    break
+            
+            if not artifacts_found:
+                raise ValueError(
+                    f"Cannot run 'shelve' stage: no documents found.\n"
+                    f"Please run 'generate' stage first."
+                )
+
+    def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
         Organize artifacts into the user's library.
         """
-        config = meta.configuration.shelve
+        config = job.configuration.shelve
         if not config.enabled:
             logger.info("Shelving disabled in configuration.")
             return {"status": "disabled"}
@@ -128,10 +155,10 @@ class ShelveStage(BaseStage):
         # Resolve ~ and relative paths
         if config.root_path:
             root_path = Path(config.root_path).expanduser().resolve()
+        elif "results_dir" in kwargs:
+            # Use results_dir passed from Pipeline
+            root_path = kwargs["results_dir"]
         else:
-            # Default to results_dir passed from manager/pipeline usually
-            # But here we don't have access to global results_dir easily without context
-            # We can use job_dir/../.. but that's brittle.
             # Fallback: ./scribe-out (default in Config)
             root_path = Path("./scribe-out").resolve()
 
@@ -140,7 +167,11 @@ class ShelveStage(BaseStage):
              root_path.mkdir(parents=True, exist_ok=True)
 
         # Load Context
-        context_file = job_dir / "transcripts" / "enriched_context.json"
+        if job.enriched_context_file:
+            context_file = job_dir / job.enriched_context_file
+        else:
+            context_file = job_dir / "transcripts" / "enriched_context.json"
+            
         if context_file.exists():
             with open(context_file, "r") as f:
                 context = json.load(f)
@@ -150,23 +181,17 @@ class ShelveStage(BaseStage):
         renamer = Renamer(config)
         router = Router(config, root_path)
 
-        # Find Generated Artifacts
-        # We look at Generate stage output, OR just scan "transcripts" folder
-        # The Generate stage saves results in _stages/generate.json
-        generate_result_file = job_dir / "_stages" / "generate.json"
+        # Find Generated Artifacts from JobObject
         artifacts_to_shelve = []
         
-        if generate_result_file.exists():
-            with open(generate_result_file, "r") as f:
-                gen_data = json.load(f)
-                for artifact in gen_data.get("artifacts", []):
-                    # Artifact path is relative to job_dir
-                    p = job_dir / artifact["path"]
-                    if p.exists():
-                        artifacts_to_shelve.append(p)
+        if job.final_document_files:
+            for rel_path in job.final_document_files:
+                p = job_dir / rel_path
+                if p.exists():
+                    artifacts_to_shelve.append(p)
         else:
             # Fallback: scan transcripts folder
-            logger.warning("Generate stage result not found. Scanning transcripts directory.")
+            logger.warning("No final documents listed in JobObject. Scanning transcripts directory.")
             transcripts_dir = job_dir / "transcripts"
             if transcripts_dir.exists():
                 for f in transcripts_dir.iterdir():
@@ -178,7 +203,7 @@ class ShelveStage(BaseStage):
         for artifact_path in artifacts_to_shelve:
             # 1. Rename
             if config.strategy == "zettelkasten":
-                new_filename = renamer.get_new_filename(artifact_path, context, meta.created_at)
+                new_filename = renamer.get_new_filename(artifact_path, context, job.created_at)
             else:
                 # Timeline or default: Keep original name or just ensure safe name
                 new_filename = artifact_path.name
@@ -188,8 +213,8 @@ class ShelveStage(BaseStage):
                 dest_dir = router.determine_destination(context)
             elif config.strategy == "timeline":
                 # Year/Month/Day/JobName structure
-                date_folder = meta.created_at.strftime("%Y/%m/%d")
-                dest_dir = root_path / date_folder / meta.job_id
+                date_folder = job.created_at.strftime("%Y/%m/%d")
+                dest_dir = root_path / date_folder / job.job_id
                 dest_dir.mkdir(parents=True, exist_ok=True)
             else:
                 # Flat or custom

@@ -21,24 +21,48 @@ console = Console()
 
 class Wizard:
     def __init__(self):
-        self.config, self.is_existing = self._load_config()
+        self.config, self.is_existing, self.config_path = self._load_config()
 
-    def _load_config(self) -> Tuple[Dict[str, Any], bool]:
-        config_path = Path("config.yaml")
-        if config_path.exists():
-            try:
-                with open(config_path, "r") as f:
-                    return yaml.safe_load(f) or {}, True
-            except Exception as e:
-                console.print(f"[red]Error reading {config_path}: {e}[/red]")
-                sys.exit(1)
+    def _load_config(self) -> Tuple[Dict[str, Any], bool, Path]:
+        """Load config from standard locations, return (config, is_existing, path_to_save)."""
+        # Check for existing config in the same order as load_config(), plus project directory
+        project_config = Path(__file__).parent.parent / "config.yaml"
+        paths_to_check = [
+            Path("config.yaml"),  # Current directory
+            project_config,  # Project directory (where amanu is installed)
+            Path.home() / ".config" / "amanu" / "config.yaml"  # User config dir
+        ]
         
+        for config_path in paths_to_check:
+            if config_path.exists():
+                try:
+                    with open(config_path, "r") as f:
+                        return yaml.safe_load(f) or {}, True, config_path
+                except Exception as e:
+                    console.print(f"[red]Error reading {config_path}: {e}[/red]")
+                    sys.exit(1)
+        
+        # No existing config found, load example and determine save location
+        # Look for config.example.yaml in the package directory
+        example_config_path = Path(__file__).parent.parent / "config.example.yaml"
         try:
-            with open("config.example.yaml", "r") as f:
-                return yaml.safe_load(f) or {}, False
+            with open(example_config_path, "r") as f:
+                example_config = yaml.safe_load(f) or {}
         except FileNotFoundError:
-            console.print("[red]Error: config.example.yaml not found.[/red]")
+            console.print(f"[red]Error: config.example.yaml not found at {example_config_path}[/red]")
             sys.exit(1)
+        
+        # Determine where to save new config
+        # Prefer current directory if we're in the project directory, otherwise use ~/.config/amanu/
+        if Path.cwd() == project_config.parent:
+            # We're in the project directory
+            save_path = Path("config.yaml")
+        else:
+            # We're elsewhere, use user config directory
+            save_path = Path.home() / ".config" / "amanu" / "config.yaml"
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        return example_config, False, save_path
 
     def run(self):
         try:
@@ -110,15 +134,28 @@ class Wizard:
         
         gemini_available = bool(gemini_models)
 
+        # Zai
+        current_zai_key = self.config.get("providers", {}).get("zai", {}).get("api_key")
+        zai_available = False
+        if questionary.confirm("Configure Zai (Zhipu AI) provider?", default=False).ask():
+            new_zai_key = questionary.password("Enter Zai API Key:", default=current_zai_key or "").ask()
+            if new_zai_key:
+                self.config.setdefault("providers", {}).setdefault("zai", {})["api_key"] = new_zai_key
+                zai_available = True
+        elif current_zai_key:
+            zai_available = True
+
         # Transcribe
         current_provider = self.config.get("transcribe", {}).get("provider")
+        provider_choices = [
+            questionary.Choice("Gemini", "gemini", disabled=not gemini_available),
+            questionary.Choice("Whisper", "whisper", disabled=not self._check_whisper()),
+            questionary.Choice("Zai", "zai", disabled=not zai_available),
+        ]
         provider = questionary.select(
             "Select transcription provider:",
-            choices=[
-                questionary.Choice("Gemini", "gemini", disabled=not gemini_available),
-                questionary.Choice("Whisper", "whisper", disabled=not self._check_whisper()),
-            ],
-            default=current_provider if (current_provider == "gemini" and gemini_available) or (current_provider == "whisper" and self._check_whisper()) else None
+            choices=provider_choices,
+            default=current_provider if current_provider in [c.value for c in provider_choices if not c.disabled] else None
         ).ask()
 
         if provider == "gemini":
@@ -130,6 +167,13 @@ class Wizard:
             whisper_models = [m["name"] for m in self.config["providers"]["whisper"]["models"]]
             model = questionary.select("Select Whisper model:", choices=whisper_models, default=current_model if current_model in whisper_models else None).ask()
             self.config["transcribe"] = {"provider": "whisper", "model": model}
+        elif provider == "zai":
+            current_model = self.config.get("transcribe", {}).get("model")
+            # Assuming glm-asr is the primary model for now
+            zai_models = [m["name"] for m in self.config.get("providers", {}).get("zai", {}).get("models", [])]
+            if not zai_models: zai_models = ["glm-asr"] # Fallback
+            model = questionary.select("Select Zai model:", choices=zai_models, default=current_model if current_model in zai_models else None).ask()
+            self.config["transcribe"] = {"provider": "zai", "model": model}
 
         # Refine
         current_provider = self.config.get("refine", {}).get("provider")
@@ -205,9 +249,9 @@ class Wizard:
             self._save_config()
 
     def _save_config(self):
-        with open("config.yaml", "w") as f:
+        with open(self.config_path, "w") as f:
             yaml.dump(self.config, f, sort_keys=False)
-        console.print("\n[green]Configuration saved![/green]")
+        console.print(f"\n[green]Configuration saved to {self.config_path}![/green]")
 
     def _check_whisper(self) -> bool:
         try:
@@ -237,7 +281,7 @@ class Wizard:
         console.print(Panel(banner_text, title="[bold white]Amanu Configuration Wizard[/bold white]", border_style="magenta"))
 
     def _display_summary(self):
-        console.print(Panel("[bold white]Current Configuration[/bold white]", border_style="green"))
+        console.print(Panel(f"[bold white]Current Configuration[/bold white]\n[dim]{self.config_path}[/dim]", border_style="green"))
         
         transcribe_provider = self.config.get("transcribe", {}).get("provider", "N/A")
         transcribe_model = self.config.get("transcribe", {}).get("model", "N/A")

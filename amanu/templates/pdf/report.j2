@@ -1,3 +1,39 @@
+---
+custom_fields:
+  summary:
+    description: "A concise executive summary of the transcript."
+    structure: "string"
+  date:
+    description: "The date of the conversation or 'Unknown'."
+    structure: "string"
+  language:
+    description: "The primary language of the conversation."
+    structure: "string"
+  sentiment:
+    description: "The overall sentiment of the conversation (positive, neutral, negative)."
+    structure: "string"
+  key_takeaways:
+    description: "3-5 most important points or conclusions."
+    structure: ["string"]
+  action_items:
+    description: "List of tasks, assignments, or next steps mentioned."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          assignee: {type: ["string", "null"]}
+          task: {type: string}
+  quotes:
+    description: "3-5 most memorable or significant verbatim quotes."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          speaker: {type: string}
+          text: {type: string}
+---
 # PDF Report: {{ summary | default('Transcript Report') }}
 
 ## Details

@@ -392,8 +392,9 @@ amanu run audio.mp3
 
 ---
 
-## 🔍 What's Next?
+## 🔍 Related Documentation
 
-- [Features Guide](./features.md) - What Amanu can do
-- [Customization Guide](./customization.md) - Templates and plugins
-- [Troubleshooting](./troubleshooting.md) - Common issues
+- **[Features Guide](./features.md)** - What Amanu can do
+- **[Template System](./template_system_design.md)** - Creating custom templates
+- **[Usage Guide](./usage_guide.md)** - Multi-provider setup
+- **[Documentation Index](./INDEX.md)** - Complete documentation overview

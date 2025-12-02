@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from .base import BaseStage
-from ..core.models import JobMeta, StageName
+from ..core.models import JobObject, StageName
 from ..core.factory import ProviderFactory
 
 logger = logging.getLogger("Amanu.Scribe")
@@ -14,35 +14,49 @@ logger = logging.getLogger("Amanu.Scribe")
 class ScribeStage(BaseStage):
     stage_name = StageName.SCRIBE
 
-    def execute(self, job_dir: Path, meta: JobMeta, **kwargs) -> Dict[str, Any]:
+    def validate_prerequisites(self, job_dir: Path, job: JobObject) -> None:
+        """
+        Validate prerequisites for scribe stage.
+        """
+        # Check that ingest stage completed successfully
+        ingest_result = job.ingest_result
+        if not ingest_result:
+            # Try fallback for backward compatibility
+            try:
+                ingest_result = self._load_ingest_result(job_dir)
+            except FileNotFoundError:
+                raise ValueError(
+                    f"Cannot run 'scribe' stage: ingest result not found.\n"
+                    f"Please run 'ingest' stage first."
+                )
+
+    def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
         Transcribe audio using the configured provider.
         """
-        # Load ingest result
-        ingest_result = self._load_ingest_result(job_dir)
+        # Load ingest result from JobObject
+        ingest_result = job.ingest_result
+        if not ingest_result:
+             # Fallback for backward compatibility or manual runs
+             try:
+                 ingest_result = self._load_ingest_result(job_dir)
+             except FileNotFoundError:
+                 raise RuntimeError("Ingest result not found in JobObject or file system.")
         
         # Initialize Provider
-        provider_name = meta.configuration.transcribe.provider
+        provider_name = job.configuration.transcribe.provider
         logger.info(f"Using transcription provider: {provider_name}")
         
         provider_config = self.manager.providers.get(provider_name)
         if not provider_config:
-            # Fallback or error?
-            # If provider is gemini, we might have default env var fallback inside provider, 
-            # but better to pass empty config if missing.
-            # But wait, manager.providers is populated from ConfigContext.providers which has defaults.
-            # So it should be there.
             logger.warning(f"No configuration found for provider {provider_name}. Using defaults/empty.")
-            # We need to pass the correct type if possible, or let provider handle None/dict
-            # The provider expects a specific Pydantic model.
-            # But manager.providers stores Pydantic models (GeminiConfig etc).
             pass
 
-        provider = ProviderFactory.create(provider_name, meta.configuration, provider_config)
+        provider = ProviderFactory.create(provider_name, job.configuration, provider_config)
         
         # Execute Transcription
         try:
-            result = provider.transcribe(ingest_result)
+            result = provider.transcribe(ingest_result, job_dir=job_dir)
         except Exception as e:
             logger.error(f"Transcription failed: {e}")
             raise
@@ -61,17 +75,19 @@ class ScribeStage(BaseStage):
         if not merged_transcript:
             raise RuntimeError("Transcription failed: No segments produced.")
 
-        # Update Meta
+        # Update Job Object
         analysis = result.get("analysis", {})
         if "language" in analysis:
-            meta.audio.language = analysis["language"]
+            job.audio.language = analysis["language"]
             
-        meta.processing.request_count += 1 # Abstract count
-        meta.processing.total_tokens.input += result.get("tokens", {}).get("input", 0)
-        meta.processing.total_tokens.output += result.get("tokens", {}).get("output", 0)
-        meta.processing.total_cost_usd += result.get("cost_usd", 0.0)
+        job.raw_transcript_file = str(raw_file.relative_to(job_dir))
+            
+        job.processing.request_count += 1 # Abstract count
+        job.processing.total_tokens.input += result.get("tokens", {}).get("input", 0)
+        job.processing.total_tokens.output += result.get("tokens", {}).get("output", 0)
+        job.processing.total_cost_usd += result.get("cost_usd", 0.0)
         
-        meta.processing.steps.append({
+        job.processing.steps.append({
             "stage": "scribe",
             "provider": provider_name,
             "timestamp": datetime.now().isoformat(),
@@ -82,7 +98,7 @@ class ScribeStage(BaseStage):
         return {
             "started_at": datetime.now().isoformat(),
             "provider": provider_name,
-            "model": meta.configuration.transcribe.model,
+            "model": job.configuration.transcribe.model,
             "segments_count": len(merged_transcript),
             "cost_usd": result.get("cost_usd", 0.0)
         }

@@ -19,9 +19,15 @@ class ProviderFactory:
             elif name == "whisper":
                 from ..providers.whisper import WhisperProvider
                 cls.register("whisper", WhisperProvider)
+            elif name == "whisperx":
+                from ..providers.whisperx_provider import WhisperXProvider
+                cls.register("whisperx", WhisperXProvider)
             elif name == "claude":
                 from ..providers.claude import ClaudeProvider
                 cls.register("claude", ClaudeProvider)
+            elif name == "zai":
+                from ..providers.zai import ZaiProvider
+                cls.register("zai", ZaiProvider)
             else:
                 raise ValueError(f"Unknown provider: {name}")
         
@@ -34,10 +40,13 @@ class ProviderFactory:
 
     @classmethod
     def get_refinement_provider_class(cls, name: str) -> Type[Any]:
-        # Currently only Gemini supported for refinement
+        # Currently supported providers for refinement
         if name == "gemini":
             from ..providers.gemini import GeminiRefinementProvider
             return GeminiRefinementProvider
+        elif name == "zai":
+            from ..providers.zai import ZaiRefinementProvider
+            return ZaiRefinementProvider
         elif name == "claude":
              # TODO: Implement ClaudeRefinementProvider
              raise NotImplementedError("Claude refinement not yet implemented.")

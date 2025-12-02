@@ -56,6 +56,7 @@ class ModelPricing(BaseModel):
 class ScribeConfig(BaseModel):
     retry_max: int = 3
     retry_delay_seconds: int = 5
+    timeout: int = 600
     provider: str = "gemini" # Default provider
 
 class StageConfig(BaseModel):
@@ -73,8 +74,26 @@ class WhisperConfig(BaseModel):
     whisper_home: Optional[str] = None  # Path to whisper.cpp directory
     models: List[WhisperModelSpec] = Field(default_factory=list)
 
+class WhisperXModelSpec(ModelSpec):
+    pass
+
+class WhisperXConfig(BaseModel):
+    python_executable: str = "python3" # Command to run python (e.g. python3, python3.11)
+    device: str = "cuda" # cuda or cpu
+    compute_type: str = "float16" # float16, int8, etc.
+    batch_size: int = 16
+    language: Optional[str] = None  # Language for transcription (e.g. "Russian", "English", "ru", "en")
+    enable_diarization: bool = False  # Enable speaker diarization
+    hf_token: Optional[str] = None  # HuggingFace token for gated models (pyannote)
+    models: List[WhisperXModelSpec] = Field(default_factory=list)
+
 class ClaudeConfig(BaseModel):
     api_key: Optional[str] = None
+    models: List[ModelSpec] = Field(default_factory=list)
+
+class ZaiConfig(BaseModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None  # For Claude-compatible endpoint
     models: List[ModelSpec] = Field(default_factory=list)
 
 class ArtifactConfig(BaseModel):
@@ -116,6 +135,7 @@ class JobConfiguration(BaseModel):
     scribe: ScribeConfig = Field(default_factory=ScribeConfig)
     transcribe: StageConfig
     refine: StageConfig
+    whisperx: WhisperXConfig = Field(default_factory=WhisperXConfig)
 
 class ConfigContext(BaseModel):
     defaults: JobConfiguration
@@ -150,4 +170,36 @@ class JobMeta(BaseModel):
     updated_at: datetime
     configuration: JobConfiguration
     audio: AudioMeta = Field(default_factory=AudioMeta)
+    processing: ProcessingStats = Field(default_factory=ProcessingStats)
+
+class JobObject(BaseModel):
+    """
+    The central state object for a job, persisted as _stages/_job.json.
+    Contains all information needed to run the pipeline and track progress.
+    """
+    job_id: str
+    original_file: str
+    created_at: datetime
+    updated_at: datetime
+    
+    # Configuration
+    configuration: JobConfiguration
+    
+    # Pipeline State
+    current_stage: str = StageName.INGEST.value
+    stages: Dict[StageName, StageState] = Field(default_factory=lambda: {
+        stage: StageState() for stage in StageName
+    })
+    errors: List[Dict[str, Any]] = Field(default_factory=list)
+    
+    # Data Artifacts & Context
+    audio: AudioMeta = Field(default_factory=AudioMeta)
+    
+    # Stage Outputs (Paths relative to job_dir)
+    ingest_result: Optional[Dict[str, Any]] = None # Stores file_uri, cache_name etc.
+    raw_transcript_file: Optional[str] = None
+    enriched_context_file: Optional[str] = None
+    final_document_files: List[str] = Field(default_factory=list)
+    
+    # Processing Stats
     processing: ProcessingStats = Field(default_factory=ProcessingStats)

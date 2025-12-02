@@ -1,3 +1,27 @@
+---
+custom_fields:
+  summary:
+    description: "A concise executive summary of the transcript."
+    structure: "string"
+  date:
+    description: "The date of the conversation or 'Unknown'."
+    structure: "string"
+  participants:
+    description: "List of real names of participants identified in the conversation."
+    structure: ["string"]
+  quotes:
+    description: "3-5 most memorable or significant verbatim quotes."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          speaker: {type: string}
+          text: {type: string}
+  keywords:
+    description: "Relevant tags or keywords extracted from the conversation."
+    structure: ["string"]
+---
 # The Story of the Conversation
 
 *Recorded on {{ date | default('a recent day') }}*
@@ -20,7 +44,6 @@ Featuring {% for p in participants %}{{ p }}{% if not loop.last %}, {% endif %}{
 {% endif %}
 
 ## The Narrative
-{{ clean_text }}
 
 ## Themes
 {% if keywords %}

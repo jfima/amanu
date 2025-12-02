@@ -92,3 +92,12 @@ Amanu is designed to be extensible. To add a new provider:
 1.  **Implement Provider Interface**: Create a new class in `amanu/providers/` inheriting from `TranscriptionProvider` (for Scribe) or `RefinementProvider` (for Refine).
 2.  **Register in Factory**: Update `amanu/core/factory.py` to register your new provider.
 3.  **Update Config**: Add configuration models in `amanu/core/models.py` and update `config.yaml`.
+
+---
+
+## Related Documentation
+
+- **[Configuration Guide](./configuration.md)** - Complete `config.yaml` reference including provider configuration
+- **[Features Guide](./features.md)** - Learn about Watch mode and job management
+- **[Architecture Report](./architecture_report.md)** - Understanding the provider abstraction layer
+- **[Documentation Index](./INDEX.md)** - Complete documentation overview

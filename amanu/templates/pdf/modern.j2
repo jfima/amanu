@@ -1,3 +1,21 @@
+---
+custom_fields:
+  summary:
+    description: "A concise executive summary of the transcript."
+    structure: "string"
+  key_takeaways:
+    description: "3-5 most important points or conclusions."
+    structure: ["string"]
+  action_items:
+    description: "List of tasks, assignments, or next steps mentioned."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          assignee: {type: ["string", "null"]}
+          task: {type: string}
+---
 # {{ summary | default('Transcript Report') }}
 
 ## Executive Summary
@@ -18,4 +36,3 @@
 {% endif %}
 
 ## Transcript
-{{ clean_text }}

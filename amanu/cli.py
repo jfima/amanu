@@ -9,7 +9,7 @@ from typing import Optional, List
 from .core.manager import JobManager
 from .core.config import load_config
 from .core.models import StageName, StageStatus
-from .pipeline import IngestStage, ScribeStage, RefineStage, ShelveStage
+from .pipeline import IngestStage, ScribeStage, RefineStage, ShelveStage, GenerateStage
 
 # Logger will be initialized after config is loaded
 logger = None
@@ -33,15 +33,21 @@ def main() -> None:
     ingest_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
     
     scribe_parser = subparsers.add_parser("scribe", help="Transcribe audio")
-    scribe_parser.add_argument("job", nargs="?", help="Job ID or path")
+    scribe_parser.add_argument("file_or_job", nargs="?", help="Job ID, job path, or original audio file path")
     scribe_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
     
     refine_parser = subparsers.add_parser("refine", help="Refine transcript")
-    refine_parser.add_argument("job", nargs="?", help="Job ID or path")
+    refine_parser.add_argument("file_or_job", nargs="?", help="Job ID, job path, or original audio file path")
     refine_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
+
+    generate_parser = subparsers.add_parser("generate", help="Generate artifacts from transcript")
+    generate_parser.add_argument("file_or_job", nargs="?", help="Job ID, job path, or original audio file path")
+    generate_parser.add_argument("--output-format", help="Output format (e.g., txt, md, pdf)")
+    generate_parser.add_argument("--template", help="Template to use for generation")
+    generate_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
     
     shelve_parser = subparsers.add_parser("shelve", help="Categorize result")
-    shelve_parser.add_argument("job", nargs="?", help="Job ID or path")
+    shelve_parser.add_argument("file_or_job", nargs="?", help="Job ID, job path, or original audio file path")
     shelve_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
 
     # Orchestration
@@ -174,20 +180,38 @@ def main() -> None:
             stage = IngestStage(manager)
             stage.run(meta.job_id)
             
-        elif args.command in ["scribe", "refine", "shelve"]:
+        elif args.command in ["scribe", "refine", "generate", "shelve"]:
             # Map command to stage
             command_to_stage = {
                 "scribe": StageName.SCRIBE,
                 "refine": StageName.REFINE,
+                "generate": StageName.GENERATE,
                 "shelve": StageName.SHELVE
             }
             stage_name = command_to_stage[args.command]
-            job_id = _resolve_job(manager, args.job, stage_name)
-            if not job_id:
+            job_dir = _resolve_job(manager, args.file_or_job, stage_name)
+            if not job_dir:
                 sys.exit(1)
+            
+            job_id = job_dir.name
                 
             # Always reset stage status to ensure imperative execution
             manager.retry_job(job_id, from_stage=stage_name)
+
+            # If generate command, override config
+            if args.command == "generate" and (args.output_format or args.template):
+                meta = manager.load_meta(job_id)
+                
+                # Create a new artifact config or modify the first one
+                # For simplicity, let's just create a new one for this ad-hoc generation
+                from .core.models import ArtifactConfig
+                artifact_config = ArtifactConfig(
+                    plugin=args.output_format or "txt",
+                    template=args.template or "default",
+                    filename=f"generated_{args.template or 'default'}"
+                )
+                meta.configuration.output.artifacts = [artifact_config]
+                manager.save_meta(job_dir, meta)
                 
             # Determine stop_after
             # If --stop-after is provided, use it.
@@ -197,7 +221,7 @@ def main() -> None:
             
             from .pipeline.base import Pipeline
             pipeline = Pipeline(manager, results_dir=Path(config_context.paths.results))
-            pipeline.run_all_stages(job_id, stop_after=stop_after)
+            pipeline.run_all_stages(job_id, start_at=stage_name, stop_after=stop_after)
 
         elif args.command == "run":
             # Full pipeline
@@ -355,6 +379,17 @@ def main() -> None:
 
     except ValueError as e:
         logger.error(str(e))
+        # Add recommendations for common errors
+        error_msg = str(e)
+        if "no input data found" in error_msg and "refine" in error_msg:
+            logger.info("Hint: Try running 'amanu scribe %s' first", args.file_or_job if hasattr(args, 'file_or_job') else '<filename>')
+            logger.info("Or use 'amanu run %s --skip-transcript' for direct analysis", args.file_or_job if hasattr(args, 'file_or_job') else '<filename>')
+        elif "ingest result not found" in error_msg and "scribe" in error_msg:
+            logger.info("Hint: Try running 'amanu ingest %s' first", args.file_or_job if hasattr(args, 'file_or_job') else '<filename>')
+        elif "enriched context not found" in error_msg and "generate" in error_msg:
+            logger.info("Hint: Try running 'amanu refine %s' first", args.file_or_job if hasattr(args, 'file_or_job') else '<filename>')
+        elif "no documents found" in error_msg and "shelve" in error_msg:
+            logger.info("Hint: Try running 'amanu generate %s' first", args.file_or_job if hasattr(args, 'file_or_job') else '<filename>')
         sys.exit(1)
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
@@ -363,9 +398,51 @@ def main() -> None:
             traceback.print_exc()
         sys.exit(1)
 
-def _resolve_job(manager: JobManager, job_arg: Optional[str], stage: StageName) -> Optional[str]:
+def _find_job_by_filename(manager: JobManager, filename: str) -> Optional[Path]:
+    """
+    Найти директорию задания по имени исходного файла.
+    
+    Args:
+        manager: JobManager instance
+        filename: Имя файла (например, "dasha-fima.mp3")
+        
+    Returns:
+        Path к директории задания или None если не найдено
+    """
+    jobs = manager.list_jobs()
+    matching_jobs = []
+    
+    for job in jobs:
+        if job.original_file == filename:
+            matching_jobs.append(job)
+    
+    if not matching_jobs:
+        return None
+        
+    # Сортируем по времени обновления, берем самый свежий
+    latest_job = max(matching_jobs, key=lambda x: x.updated_at)
+    return manager._get_job_dir(latest_job.job_id)
+
+def _resolve_job(manager: JobManager, job_arg: Optional[str], stage: StageName) -> Optional[Path]:
     if job_arg:
-        return job_arg
+        # Check if it's a valid job directory
+        p = Path(job_arg)
+        if p.is_dir() and (p / "_stages" / "_job.json").exists():
+            return p
+            
+        # Check if it's a path to a file
+        if p.is_file():
+            # This is an original audio file, find job by filename
+            job_dir = _find_job_by_filename(manager, p.name)
+            if job_dir:
+                logger.info(f"Found job {job_dir.name} for file {p.name}")
+                return job_dir
+            else:
+                logger.error(f"No job found for file {p.name}")
+                return None
+        
+        # Assume it's an ID
+        return manager._get_job_dir(job_arg)
         
     # Smart detection
     ready_jobs = manager.get_ready_jobs(stage)
@@ -377,7 +454,7 @@ def _resolve_job(manager: JobManager, job_arg: Optional[str], stage: StageName) 
     if len(ready_jobs) == 1:
         job = ready_jobs[0]
         logger.info(f"Auto-selected job: {job.job_id}")
-        return job.job_id
+        return manager._get_job_dir(job.job_id)
         
     logger.error(f"Multiple jobs ready for {stage.value}. Please specify one:")
     for job in ready_jobs:

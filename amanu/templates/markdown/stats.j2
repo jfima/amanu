@@ -1,0 +1,47 @@
+---
+custom_fields:
+  speaking_stats:
+    description: "List of speakers with their total speaking time (in minutes) and percentage of total time."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          name: {type: string}
+          time_minutes: {type: number}
+          percentage: {type: string}
+  topic_stats:
+    description: "List of key topics mentioned, with the count of times they were mentioned."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          topic: {type: string}
+          count: {type: integer}
+---
+# {{ summary | default('Transcript Analysis') }}
+
+## 📈 СТАТИСТИКА
+
+{% if speaking_stats %}
+### Общее время говорения
+{% for stat in speaking_stats %}
+- **{{ stat.name }}**: {{ stat.time_minutes }} мин ({{ stat.percentage }})
+{% endfor %}
+{% endif %}
+
+{% if topic_stats %}
+### Ключевые темы
+{% for stat in topic_stats %}
+- {{ stat.topic }} (упомянуто {{ stat.count }} раз)
+{% endfor %}
+{% endif %}
+
+## Summary
+{{ summary }}
+
+## Key Takeaways
+{% for item in key_takeaways %}
+- {{ item }}
+{% endfor %}

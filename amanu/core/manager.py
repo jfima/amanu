@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from .models import (
-    JobState, JobMeta, StageName, StageStatus, 
-    StageState, JobConfiguration
+    JobState, JobMeta, StageName, StageStatus,
+    StageState, JobConfiguration, JobObject
 )
 
 logger = logging.getLogger("Amanu.JobManager")
@@ -40,7 +40,7 @@ class JobManager:
         
         return work_path
 
-    def create_job(self, file_path: Path, config: JobConfiguration) -> JobMeta:
+    def create_job(self, file_path: Path, config: JobConfiguration) -> JobObject:
         """Initialize a new job."""
         timestamp = datetime.now()
         job_id = f"{timestamp.strftime('%y-%m%d-%H%M%S')}_{file_path.stem}"
@@ -59,18 +59,19 @@ class JobManager:
         dest_file = job_dir / "media" / f"original{file_path.suffix}"
         shutil.copy2(file_path, dest_file)
         
-        # Create Initial State
-        state = JobState(
+        # Create Job Object
+        job = JobObject(
             job_id=job_id,
             original_file=file_path.name,
             created_at=timestamp,
             updated_at=timestamp,
-            current_stage=StageName.INGEST.value,
-            location=job_dir
+            configuration=config,
+            current_stage=StageName.INGEST.value
         )
-        self.save_state(job_dir, state)
+        self.save_job_object(job_dir, job)
         
-        # Create Initial Meta
+        # Create Initial Meta (for compatibility/reporting)
+        # We still create meta.json at start, but it will be overwritten at end
         meta = JobMeta(
             job_id=job_id,
             original_file=file_path.name,
@@ -80,12 +81,29 @@ class JobManager:
         )
         self.save_meta(job_dir, meta)
         
-        return meta
+        return job
 
-    def save_state(self, job_dir: Path, state: JobState) -> None:
-        state.updated_at = datetime.now()
-        with open(job_dir / "state.json", "w") as f:
-            f.write(state.model_dump_json(indent=2))
+    def save_job_object(self, job_dir: Path, job: JobObject) -> None:
+        job.updated_at = datetime.now()
+        with open(job_dir / "_stages" / "_job.json", "w") as f:
+            f.write(job.model_dump_json(indent=2))
+
+    def load_job_object(self, job_id_or_path: Any) -> JobObject:
+        if isinstance(job_id_or_path, Path):
+            job_dir = job_id_or_path
+        else:
+            job_dir = self._get_job_dir(job_id_or_path)
+            
+        job_file = job_dir / "_stages" / "_job.json"
+        if not job_file.exists():
+            # Fallback for migration/old jobs?
+            # For now, let's assume new architecture.
+            # If we need to support old jobs, we'd convert state.json + meta.json to _job.json here.
+            raise FileNotFoundError(f"Job object not found for {job_id_or_path}")
+            
+        with open(job_file, "r") as f:
+            data = json.load(f)
+        return JobObject(**data)
 
     def save_meta(self, job_dir: Path, meta: JobMeta) -> None:
         meta.updated_at = datetime.now()
@@ -94,23 +112,29 @@ class JobManager:
 
     def update_stage_status(self, job_id: str, stage: StageName, status: StageStatus, error: Optional[str] = None) -> None:
         job_dir = self._get_job_dir(job_id)
-        state = self.load_state(job_dir)
         
-        state.stages[stage].status = status
-        state.stages[stage].timestamp = datetime.now()
-        if error:
-            state.stages[stage].error = error
-            state.errors.append({
-                "stage": stage.value,
-                "error": error,
-                "timestamp": datetime.now().isoformat()
-            })
+        # Try to load new JobObject first
+        try:
+            job = self.load_job_object(job_dir)
+            job.stages[stage].status = status
+            job.stages[stage].timestamp = datetime.now()
+            if error:
+                job.stages[stage].error = error
+                job.errors.append({
+                    "stage": stage.value,
+                    "error": error,
+                    "timestamp": datetime.now().isoformat()
+                })
             
-        # Update current stage tracker if we are progressing
-        if status == StageStatus.IN_PROGRESS:
-            state.current_stage = stage.value
+            if status == StageStatus.IN_PROGRESS:
+                job.current_stage = stage.value
+                
+            self.save_job_object(job_dir, job)
             
-        self.save_state(job_dir, state)
+        except FileNotFoundError:
+            # Fallback to old state.json for backward compatibility
+            # (Or we could migrate it here)
+            pass
     
     def list_jobs(self, include_history: bool = False) -> List[JobState]:
         jobs = []
@@ -118,7 +142,27 @@ class JobManager:
         # 1. Active Jobs
         if self.work_dir.exists():
             for job_dir in self.work_dir.iterdir():
-                if job_dir.is_dir() and (job_dir / "state.json").exists():
+                if not job_dir.is_dir(): continue
+                
+                # Try loading _job.json first
+                if (job_dir / "_stages" / "_job.json").exists():
+                    try:
+                        job_obj = self.load_job_object(job_dir)
+                        # Convert to JobState for list compatibility
+                        state = JobState(
+                            job_id=job_obj.job_id,
+                            original_file=job_obj.original_file,
+                            created_at=job_obj.created_at,
+                            updated_at=job_obj.updated_at,
+                            current_stage=job_obj.current_stage,
+                            stages=job_obj.stages,
+                            errors=job_obj.errors,
+                            location=job_dir
+                        )
+                        jobs.append(state)
+                    except Exception as e:
+                        logger.error(f"Failed to load job {job_dir.name}: {e}")
+                elif (job_dir / "state.json").exists():
                     try:
                         state = self.load_state(job_dir)
                         state.location = job_dir
@@ -153,18 +197,35 @@ class JobManager:
         return sorted(jobs, key=lambda x: x.created_at, reverse=True)
 
     def load_state(self, job_id_or_path: Any) -> JobState:
-        """Load job state from ID or Path."""
+        """Load job state from ID or Path. Supports both old state.json and new _job.json."""
         if isinstance(job_id_or_path, Path):
             job_dir = job_id_or_path
         else:
             job_dir = self._get_job_dir(job_id_or_path)
             
+        # Try new architecture first
+        job_file = job_dir / "_stages" / "_job.json"
+        if job_file.exists():
+            try:
+                with open(job_file, "r") as f:
+                    data = json.load(f)
+                job = JobObject(**data)
+                # Convert to JobState
+                return JobState(
+                    job_id=job.job_id,
+                    original_file=job.original_file,
+                    created_at=job.created_at,
+                    updated_at=job.updated_at,
+                    current_stage=job.current_stage,
+                    stages=job.stages,
+                    errors=job.errors,
+                    location=job_dir
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load _job.json for {job_dir}: {e}")
+
+        # Fallback to old state.json
         state_file = job_dir / "state.json"
-        if not state_file.exists():
-            # Try to find in results if not found (simple search)
-            # This is a bit hacky but helps if we only have ID
-            pass 
-            
         if not state_file.exists():
              raise FileNotFoundError(f"State file not found for job {job_id_or_path}")
         
@@ -173,12 +234,33 @@ class JobManager:
         return JobState(**data)
 
     def load_meta(self, job_id_or_path: Any) -> JobMeta:
-        """Load job meta from ID or Path."""
+        """Load job meta from ID or Path. Supports both old meta.json and new _job.json."""
         if isinstance(job_id_or_path, Path):
             job_dir = job_id_or_path
         else:
             job_dir = self._get_job_dir(job_id_or_path)
             
+        # Try new architecture first
+        job_file = job_dir / "_stages" / "_job.json"
+        if job_file.exists():
+            try:
+                with open(job_file, "r") as f:
+                    data = json.load(f)
+                job = JobObject(**data)
+                # Convert to JobMeta
+                return JobMeta(
+                    job_id=job.job_id,
+                    original_file=job.original_file,
+                    created_at=job.created_at,
+                    updated_at=job.updated_at,
+                    configuration=job.configuration,
+                    audio=job.audio,
+                    processing=job.processing
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load _job.json for meta {job_dir}: {e}")
+
+        # Fallback to old meta.json
         meta_file = job_dir / "meta.json"
         if not meta_file.exists():
             raise FileNotFoundError(f"Meta file not found for job {job_id_or_path}")
@@ -214,10 +296,21 @@ class JobManager:
 
     def finalize_job(self, job_id: str, results_dir: Path) -> Path:
         job_dir = self._get_job_dir(job_id)
-        meta = self.load_meta(job_id)
+        job = self.load_job_object(job_id)
+        
+        # Create final meta from job object
+        final_meta = JobMeta(
+            job_id=job.job_id,
+            original_file=job.original_file,
+            created_at=job.created_at,
+            updated_at=datetime.now(),
+            configuration=job.configuration,
+            audio=job.audio,
+            processing=job.processing
+        )
         
         # Create result path based on shelve.strategy
-        if meta.configuration.shelve.strategy == "zettelkasten":
+        if job.configuration.shelve.strategy == "zettelkasten":
             # Flat structure: results/zettelkasten/job_id
             # Or maybe just results/job_id? Let's use a subfolder to be clean.
             # User asked for "Flat/Topic-based". 
@@ -225,23 +318,31 @@ class JobManager:
             final_dest = results_dir / "zettelkasten" / job_dir.name
         else:
             # Default: Timeline (YYYY/MM/DD)
-            date_path = meta.created_at.strftime("%Y/%m/%d")
+            date_path = job.created_at.strftime("%Y/%m/%d")
             final_dest = results_dir / date_path / job_dir.name
             
         final_dest.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Save final meta.json to work dir before copy
+        self.save_meta(job_dir, final_meta)
         
         # Copy everything except _stages (unless debug is on)
         if final_dest.exists():
             shutil.rmtree(final_dest)
         
         ignore_patterns = []
-        if not meta.configuration.debug:
+        if not job.configuration.debug:
             ignore_patterns.append("_stages")
+        else:
+            logger.info("Debug mode enabled: Preserving _stages directory in results.")
             
         shutil.copytree(job_dir, final_dest, ignore=shutil.ignore_patterns(*ignore_patterns))
         
         # Cleanup work dir
-        shutil.rmtree(job_dir)
+        if not job.configuration.debug:
+            shutil.rmtree(job_dir)
+        else:
+            logger.info(f"Debug mode enabled: Preserving work directory at {job_dir}")
         
         return final_dest
 
@@ -292,37 +393,53 @@ class JobManager:
         return removed_count
 
     def retry_job(self, job_id: str, from_stage: Optional[StageName] = None) -> None:
-        """Retry a failed job from a specific stage.
-        
-        Args:
-            job_id: Job ID to retry
-            from_stage: Stage to retry from (None = retry from first failed stage)
-        """
-        state = self.load_state(job_id)
-        
-        # Find the stage to retry from
-        if from_stage is None:
-            # Find first failed stage
-            stage_order = [s for s in StageName]
-            for stage in stage_order:
-                if state.stages[stage].status == StageStatus.FAILED:
-                    from_stage = stage
-                    break
-                    
-            if from_stage is None:
-                raise ValueError(f"No failed stages found in job {job_id}")
-        
-        # Reset stages from the retry point onwards
-        stage_order = [s for s in StageName]
-        start_idx = stage_order.index(from_stage)
-        
-        for stage in stage_order[start_idx:]:
-            state.stages[stage] = StageState(status=StageStatus.PENDING)
-        
-        state.current_stage = from_stage.value
-        state.errors = []  # Clear errors
-        
+        """Retry a failed job from a specific stage."""
         job_dir = self._get_job_dir(job_id)
-        self.save_state(job_dir, state)
         
+        # Try new architecture
+        if (job_dir / "_stages" / "_job.json").exists():
+            job = self.load_job_object(job_dir)
+            
+            if from_stage is None:
+                stage_order = [s for s in StageName]
+                for stage in stage_order:
+                    if job.stages[stage].status == StageStatus.FAILED:
+                        from_stage = stage
+                        break
+                if from_stage is None:
+                    raise ValueError(f"No failed stages found in job {job_id}")
+            
+            stage_order = [s for s in StageName]
+            start_idx = stage_order.index(from_stage)
+            
+            for stage in stage_order[start_idx:]:
+                job.stages[stage] = StageState(status=StageStatus.PENDING)
+            
+            job.current_stage = from_stage.value
+            job.errors = []
+            self.save_job_object(job_dir, job)
+            
+        else:
+            # Fallback to old architecture
+            state = self.load_state(job_id)
+            
+            if from_stage is None:
+                stage_order = [s for s in StageName]
+                for stage in stage_order:
+                    if state.stages[stage].status == StageStatus.FAILED:
+                        from_stage = stage
+                        break
+                if from_stage is None:
+                    raise ValueError(f"No failed stages found in job {job_id}")
+            
+            stage_order = [s for s in StageName]
+            start_idx = stage_order.index(from_stage)
+            
+            for stage in stage_order[start_idx:]:
+                state.stages[stage] = StageState(status=StageStatus.PENDING)
+            
+            state.current_stage = from_stage.value
+            state.errors = []
+            self.save_state(job_dir, state)
+            
         logger.info(f"Reset job {job_id} to retry from stage {from_stage.value}")

@@ -1,6 +1,6 @@
 # Configuration with sensitive data
 config.yaml
-configtmp.yaml
+
 
 # Python
 __pycache__/
@@ -43,6 +43,7 @@ env/
 scribe-in/
 scribe-out/
 scribe-work/
+scribe-work2/
 
 # Logs
 logs/
@@ -57,3 +58,10 @@ technical_specification.md
 *.tmp
 *.bak
 .cache/
+
+# Test files and temporary configs
+chapters.txt
+config_whisperx_test.yaml
+gemini.yaml
+test/
+tests/verify_dynamic_schema.py

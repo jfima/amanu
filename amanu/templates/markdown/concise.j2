@@ -1,3 +1,27 @@
+---
+custom_fields:
+  summary:
+    description: "A concise executive summary of the transcript."
+    structure: "string"
+  date:
+    description: "The date of the conversation or 'Unknown'."
+    structure: "string"
+  language:
+    description: "The primary language of the conversation."
+    structure: "string"
+  action_items:
+    description: "List of tasks, assignments, or next steps mentioned."
+    structure:
+      type: array
+      items:
+        type: object
+        properties:
+          assignee: {type: ["string", "null"]}
+          task: {type: string}
+  key_takeaways:
+    description: "3-5 most important points or conclusions."
+    structure: ["string"]
+---
 # 🚀 Meeting Brief: {{ summary | truncate(50, True) }}
 
 **Date:** {{ date | default('Unknown') }} | **Language:** {{ language }}

@@ -331,8 +331,10 @@ amanu watch  # Drop daily notes into folder
 
 ---
 
-## 🔍 What's Next?
+## 🔍 Related Documentation
 
-- [Configuration Guide](./configuration.md) - Deep dive into settings
-- [Customization Guide](./customization.md) - Templates and plugins
-- [Architecture](./architecture_report.md) - How it works under the hood
+- **[Configuration Guide](./configuration.md)** - Deep dive into settings
+- **[Template System](./template_system_design.md)** - Creating custom templates with Front Matter
+- **[Usage Guide](./usage_guide.md)** - Multi-provider configuration
+- **[Architecture Report](./architecture_report.md)** - How it works under the hood
+- **[Documentation Index](./INDEX.md)** - Complete documentation overview

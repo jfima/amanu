@@ -10,7 +10,7 @@ import google.generativeai as genai
 from google.generativeai import caching
 
 from .base import BaseStage
-from ..core.models import JobMeta, StageName, AudioMeta
+from ..core.models import JobObject, StageName, AudioMeta
 from ..core.factory import ProviderFactory
 
 logger = logging.getLogger("Amanu.Ingest")
@@ -18,7 +18,22 @@ logger = logging.getLogger("Amanu.Ingest")
 class IngestStage(BaseStage):
     stage_name = StageName.INGEST
 
-    def execute(self, job_dir: Path, meta: JobMeta, **kwargs) -> Dict[str, Any]:
+    def validate_prerequisites(self, job_dir: Path, job: JobObject) -> None:
+        """
+        Validate prerequisites for ingest stage.
+        """
+        # Check that source file exists
+        media_dir = job_dir / "media"
+        original_files = list(media_dir.glob("original.*"))
+        if not original_files:
+            raise FileNotFoundError(f"No source file found in {media_dir}")
+        
+        # Check that file is not empty
+        original_file = original_files[0]
+        if original_file.stat().st_size == 0:
+            raise ValueError(f"Source file is empty: {original_file}")
+
+    def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
         Analyze, Compress, and Upload audio.
         Combines previous Scout and Prep stages.
@@ -35,25 +50,32 @@ class IngestStage(BaseStage):
         # 2. Analyze Audio (Scout Logic)
         logger.info(f"Analyzing {original_file.name}...")
         audio_meta = self._analyze_audio(original_file)
-        meta.audio = audio_meta
+        job.audio = audio_meta
         
         # Estimate tokens (conservative 15 tokens/sec for output limit check)
         estimated_output_tokens = int(audio_meta.duration_seconds * 15)
         
         # Determine Provider Requirements
-        provider_name = meta.configuration.transcribe.provider
+        provider_name = job.configuration.transcribe.provider
         provider_cls = ProviderFactory.get_provider_class(provider_name)
         specs = provider_cls.get_ingest_specs()
         
         logger.info(f"Ingest for provider: {provider_name} (Format: {specs.target_format}, Upload: {specs.requires_upload})")
 
         # 3. Convert/Optimize
-        # Check if conversion is needed based on provider specs OR compression mode
-        # If provider needs WAV, we MUST convert to WAV regardless of compression mode
+        # Respect compression_mode setting:
+        # - 'original': Use original file as-is, no conversion
+        # - 'compressed' or 'optimized': Convert to provider's target format
         
         target_ext = f".{specs.target_format}"
-        needs_conversion = (original_file.suffix.lower() != target_ext) or \
-                           (meta.configuration.compression_mode in ['compressed', 'optimized'])
+        
+        # If user explicitly wants original, skip conversion entirely
+        if job.configuration.compression_mode == 'original':
+            needs_conversion = False
+        else:
+            # Otherwise, convert if format doesn't match OR compression is requested
+            needs_conversion = (original_file.suffix.lower() != target_ext) or \
+                               (job.configuration.compression_mode in ['compressed', 'optimized'])
         
         prepared_file = original_file
         if needs_conversion:
@@ -91,7 +113,7 @@ class IngestStage(BaseStage):
             if use_cache:
                 logger.info("Uploading and creating Context Cache...")
                 try:
-                    cache_name, file_name, file_uri = self._create_cache(prepared_file, meta.configuration.transcribe.model)
+                    cache_name, file_name, file_uri = self._create_cache(prepared_file, job.configuration.transcribe.model)
                 except Exception as e:
                     logger.warning(f"Cache creation failed ({e}). Falling back to direct upload.")
                     use_cache = False
@@ -110,7 +132,7 @@ class IngestStage(BaseStage):
             }
 
         # 5. Result
-        return {
+        result_data = {
             "started_at": datetime.datetime.now().isoformat(),
             "audio_meta": audio_meta.model_dump(),
             "compression": {
@@ -120,6 +142,11 @@ class IngestStage(BaseStage):
             "local_file_path": str(prepared_file), # Generic path for local providers
             "gemini": gemini_data
         }
+        
+        # Update Job Object
+        job.ingest_result = result_data
+        
+        return result_data
 
     def _analyze_audio(self, filepath: Path) -> AudioMeta:
         """Get audio details using ffprobe."""

@@ -71,17 +71,21 @@ Amanu processes your audio in **5 distinct stages**. This modular architecture a
 
 ## 📖 Documentation
 
-**New to Amanu?** Start here:
-- [Windows 11 Setup Guide](./docs/getting-started-windows.md) - Complete walkthrough for Windows users
-- [macOS Setup Guide](./docs/getting-started-macos.md) - Complete walkthrough for Mac users
+**📑 [Documentation Index](./docs/INDEX.md)** - Complete guide to all documentation
 
-**Learn the features:**
+### Quick Start Guides
+- [Windows 11 Setup](./docs/getting-started-windows.md) - Complete walkthrough for Windows users
+- [macOS Setup](./docs/getting-started-macos.md) - Complete walkthrough for Mac users
+
+### User Guides
 - [Core Features](./docs/features.md) - What Amanu can do
 - [Configuration Guide](./docs/configuration.md) - Customize your setup
-- [Templates & Plugins](./docs/customization.md) - Advanced customization
+- [Usage Guide](./docs/usage_guide.md) - Multi-provider support
+- [Template System](./docs/template_system_design.md) - Custom field architecture
 
-**For developers:**
-- [Architecture](./docs/architecture_report.md) - System design
+### Developer Docs
+- [Architecture Report](./docs/architecture_report.md) - System design
+- [Partial Pipeline Execution](./docs/partial_pipeline_execution.md) - Stage-by-stage control
 
 ---
 
