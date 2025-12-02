@@ -3,7 +3,7 @@ name = "amanu"
 version = "1.5.0"
 description = "AI-powered amanuensis for your voice notes. Mp3 to Markdown with structure."
 authors = [
-    {name = "User", email = "user@example.com"},
+    {name = "jfima", email = "efimix@gmail.com"},
 ]
 dependencies = [
     "google-generativeai",
