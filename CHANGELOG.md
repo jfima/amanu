@@ -5,6 +5,147 @@ All notable changes to Amanu will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2025-12-03
+
+### 🚀 Major Provider System Refactor
+
+This release introduces a complete overhaul of the provider system with dynamic discovery, multi-provider support, and improved configuration management.
+
+### Added
+- **Dynamic Provider Discovery**: Providers are now automatically discovered from metadata
+  - No wizard.py changes needed when adding new providers
+  - Metadata-driven provider configuration
+  - See [Adding New Providers](./docs/adding_new_providers.md) guide
+- **OpenRouter Provider**: Full integration with OpenRouter.ai
+  - Support for 100+ models from various providers
+  - Transcription via multimodal chat and Whisper models
+  - Text refinement capabilities
+  - Accurate cost tracking via generation API
+  - See [OpenRouter Quick Start](./docs/openrouter_quickstart.md)
+- **Provider Restructuring**: Each provider now has its own directory
+  - `amanu/providers/base.py` - Base provider classes
+  - `amanu/providers/gemini/` - Gemini provider
+  - `amanu/providers/openrouter/` - OpenRouter provider
+  - `amanu/providers/whisper/` - Whisper.cpp provider
+  - `amanu/providers/whisperx/` - WhisperX provider
+  - `amanu/providers/claude/` - Claude provider
+  - `amanu/providers/zai/` - Z.AI provider
+- **Provider Metadata System**: Each provider includes `defaults.yaml` with:
+  - Display name, description, and capabilities
+  - Cost and speed indicators
+  - API key requirements
+  - Supported models with pricing
+- **Enhanced Setup Wizard**: Improved interactive configuration
+  - Dynamic provider discovery and selection
+  - Rich table displays for providers and models
+  - Automatic API key validation
+  - Model recommendations based on use case
+- **Improved Reporting**: Refactored reporting system
+  - `work/` directory as source of truth for job history
+  - `results/` directory is now user-managed
+  - Better cost tracking and statistics
+  - Debug mode preserves all artifacts
+- **Configuration Improvements**:
+  - API keys moved to `.env` file
+  - Provider-specific settings in `defaults.yaml`
+  - Cleaner, simplified `config.yaml`
+  - Example configuration with detailed comments
+
+### Changed
+- **Provider Architecture**: Complete restructure from flat files to modular directories
+  - Old: `amanu/providers/gemini.py`
+  - New: `amanu/providers/gemini/provider.py`
+- **Configuration Management**:
+  - API keys no longer in `config.yaml` (use `.env` instead)
+  - Provider defaults moved from `config.yaml` to provider-specific `defaults.yaml`
+  - Eliminated configuration duplication
+- **Factory Pattern**: Updated `core/factory.py` for lazy loading
+  - Providers loaded on-demand
+  - Better error handling
+  - Support for multiple provider types per provider
+- **Reporting Logic**: Refactored job finalization
+  - Debug mode: All files preserved in `work/`
+  - Production mode: Heavy files pruned, metadata retained
+  - Consistent job state tracking
+
+### Fixed
+- **OpenRouter Refine Error**: Fixed `AttributeError` with usage object
+  - Correctly handle dictionary-based usage data
+  - Proper token count and cost tracking
+- **WhisperX SecretStr Error**: Fixed `TypeError` with HF token
+  - Proper handling of `SecretStr` objects
+  - Safe logging without exposing secrets
+- **Setup Wizard Paths**: Fixed `PermissionError` outside project root
+  - Config and logs now in `~/.config/amanu/`
+  - User-writable locations for pip installations
+
+### Documentation
+- **New Guides**:
+  - [Adding New Providers](./docs/adding_new_providers.md) - Complete provider development guide
+  - [OpenRouter Quick Start](./docs/openrouter_quickstart.md) - Getting started with OpenRouter
+  - [OpenRouter Implementation](./docs/openrouter_implementation.md) - Technical details
+  - [Dynamic Provider Discovery](./docs/dynamic_provider_discovery_plan.md) - Architecture documentation
+- **Updated Documentation**:
+  - [README.md](./README.md) - Added multi-provider information
+  - [INDEX.md](./docs/INDEX.md) - Added provider documentation section
+  - [Configuration Guide](./docs/configuration.md) - Updated for new config structure
+- **Detailed Changelogs**:
+  - [2025-12-03 OpenRouter Provider](./docs/changelog/2025-12-03_openrouter_provider.md)
+  - [2025-12-03 Dynamic Provider Discovery](./docs/changelog/2025-12-03_dynamic_provider_discovery.md)
+  - [2025-12-03 Config Refactor](./docs/changelog/2025-12-03_config_refactor.md)
+  - [2025-12-03 Reporting Refactor](./docs/changelog/2025-12-03_reporting_refactor.md)
+  - [2025-12-02 Provider Expansion](./docs/changelog/2025-12-02_provider_expansion.md)
+
+### Migration Guide (v1.5.0 → v1.6.0)
+
+#### Environment Variables
+Create a `.env` file in your project root:
+```bash
+# Copy from example
+cp .env.example .env
+
+# Add your API keys
+GEMINI_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here  # If using OpenRouter
+```
+
+#### Configuration Changes
+Update your `config.yaml`:
+```yaml
+# OLD (v1.5.0)
+providers:
+  gemini:
+    api_key: "your_key"
+    model: "gemini-2.0-flash-001"
+
+# NEW (v1.6.0)
+transcribe:
+  provider: gemini
+  model: gemini-2.0-flash-001
+
+refine:
+  provider: gemini
+  model: gemini-2.5-flash-001
+
+# API keys now in .env file
+```
+
+#### Provider Selection
+Use the setup wizard to configure providers:
+```bash
+amanu setup
+```
+
+Or manually edit `config.yaml` to choose providers:
+- `gemini` - Google Gemini (default)
+- `openrouter` - OpenRouter.ai (100+ models)
+- `whisper` - Local Whisper.cpp
+- `whisperx` - Local WhisperX
+- `claude` - Anthropic Claude
+- `zai` - Z.AI
+
+---
+
 ## [1.5.0] - 2025-11-27
 
 ### 🏗️ Architecture Refactor

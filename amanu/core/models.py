@@ -1,8 +1,8 @@
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 class StageName(str, Enum):
     INGEST = "ingest"
@@ -28,73 +28,35 @@ class JobState(BaseModel):
     original_file: str
     created_at: datetime
     updated_at: datetime
-    current_stage: str  # Can be "commissioned" or one of StageName values
+    current_stage: str
     stages: Dict[StageName, StageState] = Field(default_factory=lambda: {
         stage: StageState() for stage in StageName
     })
     errors: List[Dict[str, Any]] = Field(default_factory=list)
-    location: Optional[Path] = None # Path to job directory (not serialized by default if we exclude None)
+    location: Optional[Path] = None
 
 class PricingModel(BaseModel):
-    input: float
-    output: float
+    input: float = 0.0
+    output: float = 0.0
 
 class ModelContextWindow(BaseModel):
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 class ModelSpec(BaseModel):
     name: str
-    context_window: ModelContextWindow
-    cost_per_1M_tokens_usd: PricingModel
-
-class ModelPricing(BaseModel):
-    # Legacy support for global pricing config
-    transcribe_model_cost_per_1m_tokens: PricingModel
-    refine_model_cost_per_1m_tokens: PricingModel
+    context_window: ModelContextWindow = Field(default_factory=ModelContextWindow)
+    cost_per_1M_tokens_usd: PricingModel = Field(default_factory=PricingModel)
 
 class ScribeConfig(BaseModel):
     retry_max: int = 3
     retry_delay_seconds: int = 5
     timeout: int = 600
-    provider: str = "gemini" # Default provider
+    provider: str = "gemini"
 
 class StageConfig(BaseModel):
     provider: str
     model: str
-
-class GeminiConfig(BaseModel):
-    api_key: Optional[str] = None
-    models: List[ModelSpec] = Field(default_factory=list)
-
-class WhisperModelSpec(ModelSpec):
-    path: str
-
-class WhisperConfig(BaseModel):
-    whisper_home: Optional[str] = None  # Path to whisper.cpp directory
-    models: List[WhisperModelSpec] = Field(default_factory=list)
-
-class WhisperXModelSpec(ModelSpec):
-    pass
-
-class WhisperXConfig(BaseModel):
-    python_executable: str = "python3" # Command to run python (e.g. python3, python3.11)
-    device: str = "cuda" # cuda or cpu
-    compute_type: str = "float16" # float16, int8, etc.
-    batch_size: int = 16
-    language: Optional[str] = None  # Language for transcription (e.g. "Russian", "English", "ru", "en")
-    enable_diarization: bool = False  # Enable speaker diarization
-    hf_token: Optional[str] = None  # HuggingFace token for gated models (pyannote)
-    models: List[WhisperXModelSpec] = Field(default_factory=list)
-
-class ClaudeConfig(BaseModel):
-    api_key: Optional[str] = None
-    models: List[ModelSpec] = Field(default_factory=list)
-
-class ZaiConfig(BaseModel):
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None  # For Claude-compatible endpoint
-    models: List[ModelSpec] = Field(default_factory=list)
 
 class ArtifactConfig(BaseModel):
     plugin: str
@@ -112,7 +74,7 @@ class ZettelkastenConfig(BaseModel):
 class ShelveConfig(BaseModel):
     enabled: bool = True
     root_path: Optional[str] = None 
-    strategy: str = "timeline" # timeline, zettelkasten, flat
+    strategy: str = "timeline"
     zettelkasten: ZettelkastenConfig = Field(default_factory=ZettelkastenConfig)
 
 class PathsConfig(BaseModel):
@@ -126,21 +88,22 @@ class CleanupConfig(BaseModel):
     auto_cleanup_enabled: bool = True
 
 class JobConfiguration(BaseModel):
-    # Deprecated: template: str (Moved to output.artifacts)
-    language: str
-    compression_mode: str = "compressed"  # Options: "original", "compressed", "optimized"
+    language: str = "auto"
+    compression_mode: str = "compressed"
     shelve: ShelveConfig = Field(default_factory=ShelveConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     debug: bool = False
     scribe: ScribeConfig = Field(default_factory=ScribeConfig)
     transcribe: StageConfig
     refine: StageConfig
-    whisperx: WhisperXConfig = Field(default_factory=WhisperXConfig)
+    # Providers config will be dynamic, but we can keep a generic dict here if needed,
+    # or rely on the root ConfigContext to hold provider configs.
+    # For job serialization, it's useful to snapshot the config used.
+    providers: Dict[str, Any] = Field(default_factory=dict)
 
 class ConfigContext(BaseModel):
     defaults: JobConfiguration
-    available_models: List[ModelSpec] # Keep for backward compatibility or general reference
-    providers: Dict[str, Any] = Field(default_factory=dict) # gemini -> GeminiConfig, etc.
+    providers: Dict[str, Any] = Field(default_factory=dict)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     cleanup: CleanupConfig = Field(default_factory=CleanupConfig)
 
@@ -173,33 +136,19 @@ class JobMeta(BaseModel):
     processing: ProcessingStats = Field(default_factory=ProcessingStats)
 
 class JobObject(BaseModel):
-    """
-    The central state object for a job, persisted as _stages/_job.json.
-    Contains all information needed to run the pipeline and track progress.
-    """
     job_id: str
     original_file: str
     created_at: datetime
     updated_at: datetime
-    
-    # Configuration
     configuration: JobConfiguration
-    
-    # Pipeline State
     current_stage: str = StageName.INGEST.value
     stages: Dict[StageName, StageState] = Field(default_factory=lambda: {
         stage: StageState() for stage in StageName
     })
     errors: List[Dict[str, Any]] = Field(default_factory=list)
-    
-    # Data Artifacts & Context
     audio: AudioMeta = Field(default_factory=AudioMeta)
-    
-    # Stage Outputs (Paths relative to job_dir)
-    ingest_result: Optional[Dict[str, Any]] = None # Stores file_uri, cache_name etc.
+    ingest_result: Optional[Dict[str, Any]] = None
     raw_transcript_file: Optional[str] = None
     enriched_context_file: Optional[str] = None
     final_document_files: List[str] = Field(default_factory=list)
-    
-    # Processing Stats
     processing: ProcessingStats = Field(default_factory=ProcessingStats)

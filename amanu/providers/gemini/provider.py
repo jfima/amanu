@@ -9,8 +9,9 @@ import google.generativeai as genai
 from google.generativeai import caching
 from google.api_core import exceptions
 
-from ..core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
-from ..core.models import JobConfiguration, GeminiConfig
+from ...core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
+from ...core.models import JobConfiguration
+from . import GeminiConfig
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 logger = logging.getLogger("Amanu.Plugin.Gemini")
@@ -28,7 +29,7 @@ class GeminiProvider(TranscriptionProvider):
                  raise ValueError("Gemini API Key not found in config or environment.")
              genai.configure(api_key=api_key)
         else:
-             genai.configure(api_key=self.gemini_config.api_key)
+             genai.configure(api_key=self.gemini_config.api_key.get_secret_value())
 
     @classmethod
     def get_ingest_specs(cls) -> IngestSpecs:
@@ -305,7 +306,7 @@ class GeminiRefinementProvider(RefinementProvider):
                  raise ValueError("Gemini API Key not found.")
              genai.configure(api_key=api_key)
         else:
-             genai.configure(api_key=self.gemini_config.api_key)
+             genai.configure(api_key=self.gemini_config.api_key.get_secret_value())
 
     def refine(self, input_data: Any, mode: str, language: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         model_name = self.config.refine.model

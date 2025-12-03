@@ -1,6 +1,6 @@
 [project]
 name = "amanu"
-version = "1.5.0"
+version = "1.6.0"
 description = "AI-powered amanuensis for your voice notes. Mp3 to Markdown with structure."
 authors = [
     {name = "jfima", email = "efimix@gmail.com"},
@@ -11,6 +11,11 @@ dependencies = [
     "watchdog",
     "rich",
     "questionary",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "python-dotenv",
+    "openai>=1.0.0",
+    "requests",
 ]
 requires-python = ">=3.10"
 

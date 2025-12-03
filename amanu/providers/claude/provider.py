@@ -1,8 +1,9 @@
 import logging
 from typing import Dict, Any
 
-from ..core.providers import TranscriptionProvider, IngestSpecs
-from ..core.models import JobConfiguration, ClaudeConfig
+from ...core.providers import TranscriptionProvider, IngestSpecs
+from ...core.models import JobConfiguration
+from . import ClaudeConfig
 
 logger = logging.getLogger("Amanu.Plugin.Claude")
 

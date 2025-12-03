@@ -148,14 +148,23 @@ class RefineStage(BaseStage):
         job.enriched_context_file = str(context_file.relative_to(job_dir))
             
         if usage:
-            job.processing.total_tokens.input += usage.prompt_token_count
-            job.processing.total_tokens.output += usage.candidates_token_count
-            
-            input_tokens = usage.prompt_token_count
-            output_tokens = usage.candidates_token_count
+            # Handle dictionary usage (OpenRouter, etc.)
+            if isinstance(usage, dict):
+                input_tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("prompt_token_count") or 0
+                output_tokens = usage.get("output_tokens") or usage.get("completion_tokens") or usage.get("candidates_token_count") or 0
+                provider_cost = usage.get("cost_usd", 0.0)
+            # Handle object usage (Gemini)
+            else:
+                input_tokens = getattr(usage, "prompt_token_count", 0)
+                output_tokens = getattr(usage, "candidates_token_count", 0)
+                provider_cost = getattr(usage, "cost_usd", 0.0)
+
+            job.processing.total_tokens.input += input_tokens
+            job.processing.total_tokens.output += output_tokens
         else:
             input_tokens = 0
             output_tokens = 0
+            provider_cost = 0.0
         
         job.processing.request_count += 1
         job.processing.steps.append({
@@ -171,22 +180,29 @@ class RefineStage(BaseStage):
             }
         })
         
-        # Calculate cost - get pricing from provider model spec
-        pricing = None
-        model_name = job.configuration.refine.model
+        # Calculate cost
+        cost = 0.0
         
-        if hasattr(provider_config, 'models') and provider_config.models:
-            for model_spec in provider_config.models:
-                if model_spec.name == model_name:
-                    pricing = model_spec.cost_per_1M_tokens_usd
-                    break
-        
-        if pricing:
-             cost = (input_tokens / 1_000_000 * pricing.input) + \
-                    (output_tokens / 1_000_000 * pricing.output)
+        if provider_cost > 0:
+            cost = provider_cost
+            logger.info(f"Using provider-reported cost: ${cost:.6f}")
         else:
-             cost = 0.0
-             logger.warning(f"No pricing info for model {model_name}, cost set to 0.0")
+            # Calculate cost - get pricing from provider model spec
+            pricing = None
+            model_name = job.configuration.refine.model
+            
+            if hasattr(provider_config, 'models') and provider_config.models:
+                for model_spec in provider_config.models:
+                    if model_spec.name == model_name:
+                        pricing = model_spec.cost_per_1M_tokens_usd
+                        break
+            
+            if pricing:
+                 cost = (input_tokens / 1_000_000 * pricing.input) + \
+                        (output_tokens / 1_000_000 * pricing.output)
+            else:
+                 cost = 0.0
+                 logger.warning(f"No pricing info for model {model_name}, cost set to 0.0")
              
         job.processing.total_cost_usd += cost
         

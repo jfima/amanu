@@ -326,23 +326,32 @@ class JobManager:
         # Save final meta.json to work dir before copy
         self.save_meta(job_dir, final_meta)
         
-        # Copy everything except _stages (unless debug is on)
+        # Copy to results
         if final_dest.exists():
             shutil.rmtree(final_dest)
         
-        ignore_patterns = []
-        if not job.configuration.debug:
-            ignore_patterns.append("_stages")
-        else:
-            logger.info("Debug mode enabled: Preserving _stages directory in results.")
+        # In results, we generally don't want internal state unless specifically debugging results
+        # But for 'work', we have specific rules.
+        # For results: let's keep it clean. Exclude _stages by default.
+        ignore_patterns_results = ["_stages"]
             
-        shutil.copytree(job_dir, final_dest, ignore=shutil.ignore_patterns(*ignore_patterns))
+        shutil.copytree(job_dir, final_dest, ignore=shutil.ignore_patterns(*ignore_patterns_results))
         
-        # Cleanup work dir
+        # Cleanup work dir (Pruning)
         if not job.configuration.debug:
-            shutil.rmtree(job_dir)
+            logger.info(f"Pruning work directory {job_dir} (Debug=False)")
+            # We want to keep: _stages (for history/reporting), meta.json
+            # We want to delete: media, transcripts, artifacts (heavy stuff)
+            
+            dirs_to_remove = ["media", "transcripts", "artifacts"]
+            for d in dirs_to_remove:
+                d_path = job_dir / d
+                if d_path.exists():
+                    shutil.rmtree(d_path)
+            
+            # Also remove any other large files if necessary, but for now dirs are main culprits
         else:
-            logger.info(f"Debug mode enabled: Preserving work directory at {job_dir}")
+            logger.info(f"Debug mode enabled: Preserving full work directory at {job_dir}")
         
         return final_dest
 

@@ -14,20 +14,23 @@ class ProviderFactory:
         if name not in cls._registry:
             # Lazy load standard plugins
             if name == "gemini":
-                from ..providers.gemini import GeminiProvider
+                from ..providers.gemini.provider import GeminiProvider
                 cls.register("gemini", GeminiProvider)
             elif name == "whisper":
-                from ..providers.whisper import WhisperProvider
+                from ..providers.whisper.provider import WhisperProvider
                 cls.register("whisper", WhisperProvider)
             elif name == "whisperx":
-                from ..providers.whisperx_provider import WhisperXProvider
+                from ..providers.whisperx.provider import WhisperXProvider
                 cls.register("whisperx", WhisperXProvider)
             elif name == "claude":
-                from ..providers.claude import ClaudeProvider
+                from ..providers.claude.provider import ClaudeProvider
                 cls.register("claude", ClaudeProvider)
             elif name == "zai":
-                from ..providers.zai import ZaiProvider
+                from ..providers.zai.provider import ZaiProvider
                 cls.register("zai", ZaiProvider)
+            elif name == "openrouter":
+                from ..providers.openrouter.provider import OpenRouterTranscriptionProvider
+                cls.register("openrouter", OpenRouterTranscriptionProvider)
             else:
                 raise ValueError(f"Unknown provider: {name}")
         
@@ -42,11 +45,14 @@ class ProviderFactory:
     def get_refinement_provider_class(cls, name: str) -> Type[Any]:
         # Currently supported providers for refinement
         if name == "gemini":
-            from ..providers.gemini import GeminiRefinementProvider
+            from ..providers.gemini.provider import GeminiRefinementProvider
             return GeminiRefinementProvider
         elif name == "zai":
-            from ..providers.zai import ZaiRefinementProvider
+            from ..providers.zai.provider import ZaiRefinementProvider
             return ZaiRefinementProvider
+        elif name == "openrouter":
+            from ..providers.openrouter.provider import OpenRouterRefinementProvider
+            return OpenRouterRefinementProvider
         elif name == "claude":
              # TODO: Implement ClaudeRefinementProvider
              raise NotImplementedError("Claude refinement not yet implemented.")

@@ -4,8 +4,9 @@ from pydantic import BaseModel, Field
 from zhipuai import ZhipuAI
 import anthropic
 
-from ..core.providers import TranscriptionProvider, RefinementProvider, IngestSpecs
-from ..core.models import JobConfiguration, ModelSpec, ZaiConfig
+from ...core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
+from ...core.models import JobConfiguration
+from . import ZaiConfig
 
 logger = logging.getLogger("Amanu.Plugin.Zai")
 
@@ -15,7 +16,7 @@ class ZaiProvider(TranscriptionProvider):
         self.zai_config = provider_config
         if not self.zai_config or not self.zai_config.api_key:
             raise ValueError("Zai API Key not found in config.")
-        self.client = ZhipuAI(api_key=self.zai_config.api_key)
+        self.client = ZhipuAI(api_key=self.zai_config.api_key.get_secret_value())
 
     @classmethod
     def get_ingest_specs(cls) -> IngestSpecs:
@@ -67,13 +68,13 @@ class ZaiRefinementProvider(RefinementProvider):
             raise ValueError("Zai API Key not found in config.")
 
         # Initialize ZhipuAI client
-        self.zhipu_client = ZhipuAI(api_key=self.zai_config.api_key)
+        self.zhipu_client = ZhipuAI(api_key=self.zai_config.api_key.get_secret_value())
 
         # For Claude-compatible endpoint (if base_url is configured)
         base_url = getattr(self.zai_config, 'base_url', None)
         if base_url:
             self.claude_client = anthropic.Anthropic(
-                api_key=self.zai_config.api_key,
+                api_key=self.zai_config.api_key.get_secret_value(),
                 base_url=base_url
             )
             logger.info("Claude-compatible endpoint available for refinement")
@@ -168,14 +169,16 @@ Please format your response in a clear, structured way that can be easily parsed
         except Exception as e:
             logger.error(f"Refinement failed: {e}")
             # Try the other method as fallback
+            # Try the other method as fallback
             try:
                 if self.claude_client:
                     logger.info("Falling back to ZhipuAI native API...")
                     return self._refine_with_zhipu(text_content, language, custom_schema)
                 else:
-                    logger.info("Falling back to Claude-compatible endpoint...")
-                    # This shouldn't happen since claude_client would be None, but just in case
-                    return self._refine_with_claude(text_content, language, custom_schema)
+                    # We tried zhipu (because claude was None), failed.
+                    # We cannot try claude because it is None.
+                    logger.error("ZhipuAI native API failed and no Claude-compatible endpoint configured.")
+                    raise e
             except Exception as fallback_error:
                 logger.error(f"Fallback also failed: {fallback_error}")
                 raise

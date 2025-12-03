@@ -5,8 +5,9 @@ import subprocess
 from typing import Dict, Any, List
 from pathlib import Path
 
-from ..core.providers import TranscriptionProvider, IngestSpecs
-from ..core.models import JobConfiguration, WhisperConfig
+from ...core.providers import TranscriptionProvider, IngestSpecs
+from ...core.models import JobConfiguration
+from . import WhisperConfig
 
 logger = logging.getLogger("Amanu.Plugin.Whisper")
 

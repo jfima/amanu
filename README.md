@@ -62,10 +62,16 @@ Amanu processes your audio in **5 distinct stages**. This modular architecture a
 
 ### 🧠 Smart Features
 
+*   **Multi-Provider Support**: Choose from multiple AI providers:
+    *   **Gemini**: Google's powerful multimodal AI with caching for long files
+    *   **OpenRouter**: Access to 100+ models from various providers
+    *   **Whisper/WhisperX**: Local, private transcription on your machine
+    *   **Claude**: Anthropic's advanced language model
+    *   **Z.AI**: Additional cloud provider option
 *   **Gemini Caching**: For long recordings, Amanu uploads the file to Gemini's high-speed cache. This means you can ask for a summary, then a transcript, then a rewrite—all without waiting for the file to upload again.
-*   **Local Whisper Support**: Want privacy or free transcription? Amanu supports **Whisper.cpp**. It runs entirely on your machine.
-    *   *Note: Requires `whisper-cli` installed.*
-    *   [See Setup Guide](./docs/usage_guide.md#whisper-local) for instructions.
+*   **Local Whisper Support**: Want privacy or free transcription? Amanu supports **Whisper.cpp** and **WhisperX**. They run entirely on your machine.
+    *   *Note: Requires `whisper-cli` or WhisperX installed.*
+    *   [See Setup Guide](./docs/usage_guide.md) for instructions.
 
 ---
 
@@ -81,10 +87,12 @@ Amanu processes your audio in **5 distinct stages**. This modular architecture a
 - [Core Features](./docs/features.md) - What Amanu can do
 - [Configuration Guide](./docs/configuration.md) - Customize your setup
 - [Usage Guide](./docs/usage_guide.md) - Multi-provider support
+- [OpenRouter Quick Start](./docs/openrouter_quickstart.md) - Using OpenRouter provider
 - [Template System](./docs/template_system_design.md) - Custom field architecture
 
 ### Developer Docs
 - [Architecture Report](./docs/architecture_report.md) - System design
+- [Adding New Providers](./docs/adding_new_providers.md) - Create custom providers
 - [Partial Pipeline Execution](./docs/partial_pipeline_execution.md) - Stage-by-stage control
 
 ---

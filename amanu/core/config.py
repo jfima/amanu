@@ -1,319 +1,178 @@
-import yaml
 import os
+import yaml
+import importlib
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Type, Optional
+from dotenv import load_dotenv
 
 from .models import (
-    JobConfiguration, ModelPricing, PricingModel, ModelSpec, ModelContextWindow, ConfigContext,
-    StageConfig, GeminiConfig, WhisperConfig, ClaudeConfig, ZaiConfig, WhisperModelSpec,
-    ScribeConfig, OutputConfig, ArtifactConfig, ShelveConfig, ZettelkastenConfig,
-    PathsConfig, CleanupConfig, WhisperXModelSpec, WhisperXConfig
+    ConfigContext, JobConfiguration, PathsConfig, CleanupConfig,
+    StageConfig, ScribeConfig, OutputConfig, ShelveConfig,
+    ZettelkastenConfig, ArtifactConfig
 )
+from amanu.providers.base import ProviderConfig
 
-DEFAULT_CONFIG = {
-    "transcribe": {
-        "provider": "gemini",
-        "model": "gemini-2.0-flash"
-    },
-    "refine": {
-        "provider": "gemini",
-        "model": "gemini-2.0-flash"
-    },
-    "providers": {
-        "gemini": {
-            "api_key": "",
-            "models": [
-                {
-                    "name": "gemini-2.0-flash",
-                    "context_window": {"input_tokens": 1048576, "output_tokens": 8192},
-                    "cost_per_1M_tokens_usd": {"input": 0.10, "output": 0.40}
-                }
-            ]
-        },
-        "whisper": {
-            "models": []
-        },
-        "claude": {
-            "api_key": "",
-            "models": []
-        },
-        "whisperx": {
-            "device": "cuda",
-            "compute_type": "float16",
-            "batch_size": 16,
-            "models": [
-                {
-                    "name": "large-v2",
-                    "context_window": {"input_tokens": 0, "output_tokens": 0},
-                    "cost_per_1M_tokens_usd": {"input": 0.0, "output": 0.0}
-                }
-            ]
-        }
-    },
-    "debug": False,
-    "processing": {
-        "language": "auto",
-        "compression_mode": "compressed",
-        "output": {
-            "artifacts": []
-        }
-    },
-    "paths": {
-        "input": "./scribe-in",
-        "work": "./scribe-work",
-        "results": "./scribe-out"
-    },
-    "cleanup": {
-        "failed_jobs_retention_days": 7,
-        "completed_jobs_retention_days": 1,
-        "auto_cleanup_enabled": True
-    }
-}
+# Load environment variables from .env file
+load_dotenv()
 
-def load_config(config_path: str = None) -> ConfigContext:
-    """Load configuration from file and env vars."""
-    config = DEFAULT_CONFIG.copy()
-    
-    # 1. Load from file
-    # Search in: current dir, package dir, user config dir
-    package_config = Path(__file__).parent.parent.parent / "config.yaml"
-    paths_to_check = [
-        Path("config.yaml"),
-        package_config,
-        Path.home() / ".config" / "amanu" / "config.yaml"
-    ]
-    if config_path:
-        paths_to_check.insert(0, Path(config_path))
-        
-    for path in paths_to_check:
-        if path.exists():
-            with open(path, "r") as f:
-                user_config = yaml.safe_load(f)
-                _merge_dicts(config, user_config)
-            break
-            
-    # 2. Env vars override
-    if os.environ.get("GEMINI_API_KEY"):
-        # Ensure providers.gemini exists
-        if "providers" not in config:
-            config["providers"] = {}
-        if "gemini" not in config["providers"]:
-            config["providers"]["gemini"] = {}
-        config["providers"]["gemini"]["api_key"] = os.environ["GEMINI_API_KEY"]
-    elif config.get("providers", {}).get("gemini", {}).get("api_key"):
-        # Export to env so other modules can use it
-        os.environ["GEMINI_API_KEY"] = config["providers"]["gemini"]["api_key"]
-        
-    # 4. Parse Providers
-    providers = {}
-    
-    # Gemini - try new format first, then fall back to legacy
-    gemini_conf = config.get("providers", {}).get("gemini", {})
-    gemini_models_list = []
-    
-    # New format: providers.gemini.models
-    if gemini_conf.get("models"):
-        for m in gemini_conf["models"]:
-            gemini_models_list.append(ModelSpec(
-                name=m["name"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(
-                    input=m["cost_per_1M_tokens_usd"]["input"],
-                    output=m["cost_per_1M_tokens_usd"]["output"]
-                )
-            ))
-    # Legacy format: top-level gemini_models
-    elif "gemini_models" in config:
-        for m in config["gemini_models"]:
-            gemini_models_list.append(ModelSpec(
-                name=m["name"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(
-                    input=m["cost_per_1M_tokens_usd"]["input"],
-                    output=m["cost_per_1M_tokens_usd"]["output"]
-                )
-            ))
-    
-    # Get API key from providers.gemini.api_key or legacy gemini.api_key
-    gemini_api_key = gemini_conf.get("api_key") or config.get("gemini", {}).get("api_key")
-    
-    providers["gemini"] = GeminiConfig(
-        api_key=gemini_api_key,
-        models=gemini_models_list
-    )
+DEFAULT_CONFIG_FILENAME = "config.yaml"
 
-    # Whisper
-    whisper_conf = config.get("providers", {}).get("whisper", {})
-    whisper_models_raw = whisper_conf.get("models", [])
-    whisper_models_list = []
-    
-    if isinstance(whisper_models_raw, dict):
-        # Legacy format: name -> path
-        for name, path in whisper_models_raw.items():
-            whisper_models_list.append(WhisperModelSpec(
-                name=name,
-                path=path,
-                context_window=ModelContextWindow(input_tokens=0, output_tokens=0),
-                cost_per_1M_tokens_usd=PricingModel(input=0.0, output=0.0)
-            ))
-    elif isinstance(whisper_models_raw, list):
-        # New format
-        for m in whisper_models_raw:
-             whisper_models_list.append(WhisperModelSpec(
-                name=m["name"],
-                path=m["path"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
-            ))
-            
-    providers["whisper"] = WhisperConfig(
-        whisper_home=whisper_conf.get("whisper_home"),
-        models=whisper_models_list
-    )
-
-    # Claude
-    claude_conf = config.get("providers", {}).get("claude", {})
-    claude_models_list = []
-    
-    if claude_conf.get("models"):
-        for m in claude_conf["models"]:
-            claude_models_list.append(ModelSpec(
-                name=m["name"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
-            ))
-    
-    providers["claude"] = ClaudeConfig(
-        api_key=claude_conf.get("api_key"),
-        models=claude_models_list
-    )
-
-    # Zai
-    zai_conf = config.get("providers", {}).get("zai", {})
-    zai_models_list = []
-    
-    if zai_conf.get("models"):
-        for m in zai_conf["models"]:
-            zai_models_list.append(ModelSpec(
-                name=m["name"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
-            ))
-    
-    providers["zai"] = ZaiConfig(
-        api_key=zai_conf.get("api_key"),
-        models=zai_models_list
-    )
-
-    # WhisperX
-    whisperx_conf = config.get("providers", {}).get("whisperx", {})
-    whisperx_models_list = []
-    
-    if whisperx_conf.get("models"):
-        for m in whisperx_conf["models"]:
-            whisperx_models_list.append(WhisperXModelSpec(
-                name=m["name"],
-                context_window=ModelContextWindow(**m["context_window"]),
-                cost_per_1M_tokens_usd=PricingModel(**m["cost_per_1M_tokens_usd"])
-            ))
-            
-    providers["whisperx"] = WhisperXConfig(
-        python_executable=whisperx_conf.get("python_executable", "python3"),
-        device=whisperx_conf.get("device", "cuda"),
-        compute_type=whisperx_conf.get("compute_type", "float16"),
-        batch_size=whisperx_conf.get("batch_size", 16),
-        language=whisperx_conf.get("language"),
-        enable_diarization=whisperx_conf.get("enable_diarization", False),
-        hf_token=whisperx_conf.get("hf_token"),
-        models=whisperx_models_list
-    )
-
-    # 5. Parse Stages (Transcribe / Refine)
-    # Backward compatibility: if top-level transcribe/refine missing, use gemini legacy
-    
-    transcribe_conf = config.get("transcribe", {})
-    if not transcribe_conf.get("provider"):
-        # Fallback to legacy gemini config
-        transcribe_conf = {
-            "provider": "gemini",
-            "model": config["gemini"].get("transcribe_model", "gemini-2.0-flash")
-        }
-        
-    refine_conf = config.get("refine", {})
-    if not refine_conf.get("provider"):
-         # Fallback to legacy gemini config
-        refine_conf = {
-            "provider": "gemini",
-            "model": config["gemini"].get("refine_model", "gemini-2.0-flash")
-        }
-
-    transcribe_stage = StageConfig(**transcribe_conf)
-    refine_stage = StageConfig(**refine_conf)
-
-    # Load scribe config
-    scribe_config_dict = config["processing"].get("scribe", {})
-    scribe_config = ScribeConfig(
-        retry_max=scribe_config_dict.get("retry_max", 3),
-        retry_delay_seconds=scribe_config_dict.get("retry_delay_seconds", 5)
-    )
-
-    # Load output config
-    output_config_dict = config["processing"].get("output", {})
-    artifacts = []
-    for artifact_dict in output_config_dict.get("artifacts", []):
-        artifacts.append(ArtifactConfig(**artifact_dict))
-    output_config = OutputConfig(artifacts=artifacts)
-
-    # Load shelve config
-    shelve_config_dict = config.get("shelve", {}) # Top level or inside processing? Spec says 'shelve' at root level in yaml example section 4.1
-    # But usually config is structured. Spec section 4.1 shows:
-    # shelve:
-    #   enabled: true
-    # ...
-    # Let's check DEFAULT_CONFIG if I added it? No I didn't add it to DEFAULT_CONFIG yet.
-    
-    # If users put it in 'shelve' top-level, we should read from config['shelve'].
-    # If they put it in 'processing', we should read from there.
-    # Let's support root level 'shelve' as per spec 4.1.
-    
-    shelve_dict = config.get("shelve", {})
-    zettelkasten_dict = shelve_dict.get("zettelkasten", {})
-    zettelkasten_config = ZettelkastenConfig(**zettelkasten_dict)
-    
-    shelve_config = ShelveConfig(
-        enabled=shelve_dict.get("enabled", True),
-        root_path=shelve_dict.get("root_path"),
-        strategy=shelve_dict.get("strategy", "timeline"),
-        zettelkasten=zettelkasten_config
-    )
-    
-    defaults = JobConfiguration(
-        # template=config["processing"]["template"], # Deprecated
-        language=config["processing"]["language"],
-        compression_mode=config["processing"].get("compression_mode", "compressed"),
-        shelve=shelve_config,
-        output=output_config,
-        debug=config.get("debug", False),
-        scribe=scribe_config,
-        transcribe=transcribe_stage,
-        refine=refine_stage
-    )
-
-    # Load paths config
-    paths_config = PathsConfig(**config.get("paths", {}))
-    cleanup_config = CleanupConfig(**config.get("cleanup", {}))
-
-    return ConfigContext(
-        defaults=defaults,
-        available_models=gemini_models_list, # Legacy support
-        providers=providers,
-        paths=paths_config,
-        cleanup=cleanup_config
-    )
+def load_yaml(path: Path) -> Dict[str, Any]:
+    if path.exists():
+        with open(path, "r") as f:
+            return yaml.safe_load(f) or {}
+    return {}
 
 def _merge_dicts(base: Dict, update: Dict):
+    """Recursively merge update dict into base dict."""
     for k, v in update.items():
         if isinstance(v, dict) and k in base and isinstance(base[k], dict):
             _merge_dicts(base[k], v)
         else:
             base[k] = v
+
+def load_provider_config(provider_name: str, user_provider_config: Dict[str, Any]) -> Any:
+    """
+    Dynamically load a provider's configuration.
+    
+    Args:
+        provider_name: The name of the provider (e.g., 'gemini').
+        user_provider_config: The provider configuration from the user's config.yaml.
+        
+    Returns:
+        Validated Pydantic model for the provider configuration.
+    """
+    try:
+        # Import the provider module
+        module = importlib.import_module(f"amanu.providers.{provider_name}")
+        
+        # Expecting a 'Config' class in the module or __init__.py
+        if hasattr(module, "Config"):
+            config_model = getattr(module, "Config")
+        else:
+            # Fallback: try to find a class ending in Config
+            config_model = None
+            if hasattr(module, "__dict__"):
+                for name, obj in module.__dict__.items():
+                    if name.endswith("Config") and isinstance(obj, type) and issubclass(obj, ProviderConfig):
+                        config_model = obj
+                        break
+            
+            if not config_model:
+                # If no specific config model, return dict (or generic model)
+                return user_provider_config
+
+        # Load default config from the provider's directory
+        provider_dir = Path(module.__file__).parent
+        default_config_path = provider_dir / "defaults.yaml"
+        provider_config = load_yaml(default_config_path)
+        
+        # Merge user config into default config
+        _merge_dicts(provider_config, user_provider_config)
+        
+        # Validate with Pydantic model
+        return config_model(**provider_config)
+
+    except ImportError:
+        # Provider not found or not installed
+        # print(f"Warning: Provider '{provider_name}' not found.")
+        return user_provider_config
+    except Exception as e:
+        print(f"Error loading provider '{provider_name}': {e}")
+        return user_provider_config
+
+def load_config(config_path: str = None) -> ConfigContext:
+    """Load configuration from file and env vars."""
+    
+    # 1. Determine config path
+    if config_path:
+        user_config_path = Path(config_path)
+    else:
+        # Search order: current dir -> user home
+        cwd_config = Path(DEFAULT_CONFIG_FILENAME)
+        home_config = Path.home() / ".config" / "amanu" / DEFAULT_CONFIG_FILENAME
+        
+        if cwd_config.exists():
+            user_config_path = cwd_config
+        elif home_config.exists():
+            user_config_path = home_config
+        else:
+            # Fallback to package default if exists, or empty
+            user_config_path = Path(__file__).parent.parent.parent / DEFAULT_CONFIG_FILENAME
+
+    # 2. Load user config
+    user_config = load_yaml(user_config_path)
+    
+    # 3. Parse Core Sections
+    
+    # Paths
+    paths_conf = user_config.get("paths", {})
+    paths = PathsConfig(**paths_conf)
+    
+    # Cleanup
+    cleanup_conf = user_config.get("cleanup", {})
+    cleanup = CleanupConfig(**cleanup_conf)
+    
+    # Processing / Job Defaults
+    processing_conf = user_config.get("processing", {})
+    
+    # Extract stage configs
+    transcribe_conf = user_config.get("transcribe", {})
+    if not transcribe_conf:
+        # Fallback for legacy
+        transcribe_conf = {"provider": "gemini", "model": "gemini-2.0-flash"}
+        
+    refine_conf = user_config.get("refine", {})
+    if not refine_conf:
+        refine_conf = {"provider": "gemini", "model": "gemini-2.0-flash"}
+
+    # Output config
+    output_conf_dict = processing_conf.get("output", {})
+    output_config = OutputConfig(**output_conf_dict)
+    
+    # Shelve config
+    shelve_conf_dict = user_config.get("shelve", {})
+    if not shelve_conf_dict:
+         shelve_conf_dict = processing_conf.get("shelve", {})
+    shelve_config = ShelveConfig(**shelve_conf_dict)
+
+    # Scribe config
+    scribe_conf_dict = processing_conf.get("scribe", {})
+    scribe_config = ScribeConfig(**scribe_conf_dict)
+
+    defaults = JobConfiguration(
+        language=processing_conf.get("language", "auto"),
+        compression_mode=processing_conf.get("compression_mode", "compressed"),
+        shelve=shelve_config,
+        output=output_config,
+        debug=user_config.get("debug", False),
+        scribe=scribe_config,
+        transcribe=StageConfig(**transcribe_conf),
+        refine=StageConfig(**refine_conf)
+    )
+
+    # 4. Dynamic Provider Loading
+    providers_config = {}
+    user_providers_section = user_config.get("providers", {})
+    
+    # Identify active providers from stages + explicit providers section
+    active_providers = set(user_providers_section.keys())
+    if defaults.transcribe.provider:
+        active_providers.add(defaults.transcribe.provider)
+    if defaults.refine.provider:
+        active_providers.add(defaults.refine.provider)
+    
+    for provider_name in active_providers:
+        if not provider_name: continue
+        
+        provider_conf_dict = user_providers_section.get(provider_name, {})
+        loaded_conf = load_provider_config(provider_name, provider_conf_dict)
+        providers_config[provider_name] = loaded_conf
+        
+    # 5. Return Context
+    return ConfigContext(
+        defaults=defaults,
+        providers=providers_config,
+        paths=paths,
+        cleanup=cleanup
+    )

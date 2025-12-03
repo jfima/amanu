@@ -1,0 +1,108 @@
+# OpenRouter Provider Configuration
+# OpenRouter provides unified access to 200+ AI models through a single API
+# Supports both transcription (multimodal) and refinement (text) capabilities
+
+metadata:
+  # Display information
+  display_name: "OpenRouter"
+  description: "Access 200+ AI models through unified API. Cost-effective aggregator."
+  
+  # Provider characteristics
+  type: "cloud"
+  cost_indicator: "$$"
+  speed_indicator: "fast"
+  
+  # Capabilities
+  capabilities:
+    - transcription
+    - refinement
+  
+  # API configuration
+  api_key:
+    required: true
+    env_var: "OPENROUTER_API_KEY"
+    display_name: "OpenRouter API Key"
+  
+  # Documentation
+  docs_url: "https://openrouter.ai/docs"
+  pricing_url: "https://openrouter.ai/pricing"
+
+models:
+  # --- TRANSCRIPTION MODELS ---
+  # Multimodal models that support audio input via chat completions
+  
+  - name: mistralai/voxtral-small-24b-2507
+    type: transcription
+    context_window:
+      input_tokens: 128000
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.40
+      output: 0.40
+    
+  - name: google/gemini-2.0-flash-lite-001
+    type: multimodal
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0375
+      output: 0.15
+  
+  - name: google/gemini-2.0-flash-001
+    type: multimodal
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.075
+      output: 0.30
+  
+  # Whisper models (using audio transcriptions endpoint)
+  - name: openai/whisper-large-v3
+    type: whisper
+    context_window:
+      input_tokens: 0
+      output_tokens: 0
+    cost_per_1M_tokens_usd:
+      input: 0.006
+      output: 0.0
+  
+  # --- REFINEMENT MODELS ---
+  # Text-only models for refinement
+  
+  - name: google/gemini-2.0-flash-lite-001
+    type: refinement
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0375
+      output: 0.15
+  
+  - name: anthropic/claude-3.5-haiku
+    type: refinement
+    context_window:
+      input_tokens: 200000
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 1.00
+      output: 5.00
+  
+  - name: meta-llama/llama-3.3-70b-instruct
+    type: refinement
+    context_window:
+      input_tokens: 128000
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.59
+      output: 0.79
+  
+  - name: qwen/qwen-2.5-72b-instruct
+    type: refinement
+    context_window:
+      input_tokens: 32768
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.40
+      output: 0.40

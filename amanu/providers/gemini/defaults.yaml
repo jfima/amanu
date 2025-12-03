@@ -1,0 +1,235 @@
+# Gemini Provider Configuration
+# Google's multimodal AI models with excellent large context support
+
+metadata:
+  # Display information
+  display_name: "Gemini"
+  description: "Google's multimodal AI. Excellent for large context."
+  
+  # Provider characteristics
+  type: "cloud"
+  cost_indicator: "$$"
+  speed_indicator: "fast"
+  
+  # Capabilities
+  capabilities:
+    - transcription
+    - refinement
+  
+  # API configuration
+  api_key:
+    required: true
+    env_var: "GEMINI_API_KEY"
+    display_name: "Gemini API Key"
+  
+  # Documentation
+  docs_url: "https://ai.google.dev/docs"
+  pricing_url: "https://ai.google.dev/pricing"
+
+models:
+  # --- FLAGSHIP (Most intelligent) ---
+  # Used for complex logic, coding, deep analysis.
+  - name: gemini-3-pro-preview
+    type: pro
+    context_window:
+      input_tokens: 2097152
+      output_tokens: 65536
+    cost_per_1M_tokens_usd:
+      input: 2.00
+      output: 12.00
+
+  - name: gemini-2.5-pro
+    type: pro
+    context_window:
+      input_tokens: 2097152
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 1.25
+      output: 5.00
+
+  # Snapshots and preview versions of 2.5 Pro (price usually matches base Pro)
+  - name: gemini-2.5-pro-preview-03-25
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+  - name: gemini-2.5-pro-preview-05-06
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+  - name: gemini-2.5-pro-preview-06-05
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+  - name: gemini-pro-latest
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+
+  # --- EXPERIMENTAL PRO (Version 2.0) ---
+  - name: gemini-2.0-pro-exp
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+  - name: gemini-2.0-pro-exp-02-05
+    type: pro
+    context_window: {input_tokens: 2097152, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 5.00}
+
+  # --- FLASH (Balance speed/price) ---
+  # Optimal for summarization, chat bots, large data processing.
+  - name: gemini-2.5-flash
+    type: flash
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.075
+      output: 0.30
+
+  # Specific versions of 2.5 Flash
+  - name: gemini-2.5-flash-preview-09-2025
+    type: flash
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-flash-latest
+    type: flash
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+
+  # Version 2.0 Flash (often same price as 2.5)
+  - name: gemini-2.0-flash
+    type: flash
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-2.0-flash-001
+    type: flash
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-2.0-flash-exp
+    type: flash
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+
+  # --- LITE (Cheapest) ---
+  # For simple transcription, classification.
+  - name: gemini-2.5-flash-lite
+    type: lite
+    context_window:
+      input_tokens: 1048576
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0375
+      output: 0.15
+
+  - name: gemini-2.5-flash-lite-preview-09-2025
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+  - name: gemini-flash-lite-latest
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+
+  # Version 2.0 Lite
+  - name: gemini-2.0-flash-lite
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+  - name: gemini-2.0-flash-lite-001
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+  - name: gemini-2.0-flash-lite-preview
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+  - name: gemini-2.0-flash-lite-preview-02-05
+    type: lite
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.0375, output: 0.15}
+
+  # --- THINKING & REASONING (Thinking) ---
+  # Prices may vary, often billed as Flash or Pro.
+  # Here estimated as Flash, but output tokens cost more.
+  - name: gemini-2.0-flash-thinking-exp
+    type: thinking
+    context_window: {input_tokens: 32768, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-2.0-flash-thinking-exp-01-21
+    type: thinking
+    context_window: {input_tokens: 32768, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-2.0-flash-thinking-exp-1219
+    type: thinking
+    context_window: {input_tokens: 32768, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-exp-1206
+    type: thinking
+    context_window: {input_tokens: 32768, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+
+  # --- SPECIALIZED (Audio/Image/Edu) ---
+  - name: learnlm-2.0-flash-experimental
+    type: specialized
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+
+  # Image Specific (usually Flash price, but optimized for images)
+  - name: gemini-2.5-flash-image
+    type: specialized
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-2.5-flash-image-preview
+    type: specialized
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.30}
+  - name: gemini-3-pro-image-preview
+    type: specialized
+    context_window: {input_tokens: 1048576, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 2.00, output: 12.00}
+
+  # TTS (Audio Generation) - NOTE: price is per character, not per token!
+  # Set to 0.00 to avoid breaking parser, but keep in mind.
+  - name: gemini-2.5-flash-preview-tts
+    type: tts
+    context_window: {input_tokens: 1048576, output_tokens: 0}
+    cost_per_1M_tokens_usd: {input: 0.075, output: 0.00}
+  - name: gemini-2.5-pro-preview-tts
+    type: tts
+    context_window: {input_tokens: 2097152, output_tokens: 0}
+    cost_per_1M_tokens_usd: {input: 1.25, output: 0.00}
+
+  # --- GEMMA (Open Models Hosted) ---
+  # Price depends on size (B = Billions parameters)
+  - name: gemma-3-1b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.06, output: 0.06}
+  - name: gemma-3-4b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.06, output: 0.06}
+  - name: gemma-3-12b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.20, output: 0.20}
+  - name: gemma-3-27b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.50, output: 0.50}
+
+  # Other Gemma variants
+  - name: gemma-3n-e4b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.06, output: 0.06}
+  - name: gemma-3n-e2b-it
+    type: gemma
+    context_window: {input_tokens: 8192, output_tokens: 8192}
+    cost_per_1M_tokens_usd: {input: 0.06, output: 0.06}
+
+  # --- NANO (On-device / Experimental) ---
+  - name: nano-banana-pro-preview
+    type: nano
+    context_window: {input_tokens: 32768, output_tokens: 2048}
+    cost_per_1M_tokens_usd: {input: 0.00, output: 0.00} # Likely free or not publicly available

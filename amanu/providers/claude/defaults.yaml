@@ -1,0 +1,40 @@
+# Claude Provider Configuration
+# Anthropic's Claude models - High quality reasoning
+# Requires: CLAUDE_API_KEY in .env file
+# API Documentation: https://docs.anthropic.com/
+
+metadata:
+  # Display information
+  display_name: "Claude"
+  description: "Anthropic's Claude. High quality reasoning."
+  
+  # Provider characteristics
+  type: "cloud"
+  cost_indicator: "$$$"
+  speed_indicator: "medium"
+  
+  # Capabilities
+  capabilities:
+    - refinement
+  
+  # API configuration
+  api_key:
+    required: true
+    env_var: "CLAUDE_API_KEY"
+    display_name: "Claude API Key"
+  
+  # Documentation
+  docs_url: "https://docs.anthropic.com/"
+  pricing_url: "https://www.anthropic.com/pricing"
+
+
+models:
+  # Claude 3.5 Sonnet - Latest and most capable model
+  # Best for: Complex reasoning, analysis, content creation
+  - name: claude-3-5-sonnet-20241022
+    context_window:
+      input_tokens: 200000   # ~150,000 words
+      output_tokens: 8192    # ~6,000 words
+    cost_per_1M_tokens_usd:
+      input: 3.0
+      output: 15.0

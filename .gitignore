@@ -1,5 +1,5 @@
 # Configuration with sensitive data
-config.yaml
+.env
 
 
 # Python

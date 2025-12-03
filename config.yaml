@@ -1,0 +1,39 @@
+transcribe:
+  provider: whisperx
+  model: large-v2
+refine:
+  provider: gemini
+  model: gemini-2.5-flash-lite
+providers:
+  whisperx:
+    language: Russian
+  openrouter:
+    site_url: https://github.com/yourusername/amanu
+    app_name: amanu
+debug: true
+processing:
+  language: auto
+  compression_mode: compressed
+  shelve_mode: timeline
+  output:
+    artifacts:
+    - plugin: markdown
+      template: default
+      filename: default
+    - plugin: pdf
+      template: classic
+      filename: classic
+    - plugin: txt
+      template: default
+      filename: default
+    - plugin: txt
+      template: timestamped
+      filename: timestamped
+paths:
+  input: /home/jfima/amanu/scribe-in
+  work: /home/jfima/amanu/scribe-work
+  results: /home/jfima/amanu/scribe-out
+cleanup:
+  failed_jobs_retention_days: 7
+  completed_jobs_retention_days: 1
+  auto_cleanup_enabled: true

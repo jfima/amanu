@@ -5,8 +5,9 @@ import subprocess
 from typing import Dict, Any, List
 from pathlib import Path
 
-from ..core.providers import TranscriptionProvider, IngestSpecs
-from ..core.models import JobConfiguration, WhisperXConfig
+from ...core.providers import TranscriptionProvider, IngestSpecs
+from ...core.models import JobConfiguration
+from . import WhisperXConfig
 
 logger = logging.getLogger("Amanu.Plugin.WhisperX")
 
@@ -88,7 +89,7 @@ class WhisperXProvider(TranscriptionProvider):
         output_dir = os.path.dirname(abs_audio_path)
         
         # Path to our wrapper script
-        wrapper_script = Path(__file__).parent / "whisperx_wrapper.py"
+        wrapper_script = Path(__file__).parent / "wrapper.py"
         
         cmd = [
             self.wx_config.python_executable,
@@ -112,12 +113,23 @@ class WhisperXProvider(TranscriptionProvider):
             
         # Add HF token if provided
         if self.wx_config.hf_token:
-            cmd.extend(["--hf_token", self.wx_config.hf_token])
+            token_value = self.wx_config.hf_token.get_secret_value()
+            cmd.extend(["--hf_token", token_value])
         
         if language:
             cmd.extend(["--language", language])
             
-        logger.info(f"Running command: {' '.join(cmd)}")
+        # Create a safe command string for logging (masking token)
+        log_cmd = list(cmd)
+        if self.wx_config.hf_token:
+            try:
+                token_idx = log_cmd.index("--hf_token") + 1
+                if token_idx < len(log_cmd):
+                    log_cmd[token_idx] = "********"
+            except ValueError:
+                pass # Token flag not found, shouldn't happen
+            
+        logger.info(f"Running command: {' '.join(log_cmd)}")
         
         try:
             # Add paths for both cuDNN (system) and CUDA drivers (WSL2)

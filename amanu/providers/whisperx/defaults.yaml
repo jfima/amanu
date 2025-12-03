@@ -1,0 +1,60 @@
+# WhisperX Provider Configuration
+# Fast, GPU-accelerated speech recognition with speaker diarization
+# Requires: python3.11, CUDA-capable GPU (optional), HuggingFace token for diarization
+
+metadata:
+  # Display information
+  display_name: "WhisperX"
+  description: "Runs locally on GPU. Best for privacy and timestamps."
+  
+  # Provider characteristics
+  type: "local"
+  cost_indicator: "Free"
+  speed_indicator: "medium"
+  
+  # Capabilities
+  capabilities:
+    - transcription
+  
+  # API configuration - WhisperX uses HuggingFace token for diarization
+  api_key:
+    required: false
+    env_var: "HF_TOKEN"
+    display_name: "HuggingFace Token (optional, for diarization)"
+  
+  # Documentation
+  docs_url: "https://github.com/m-bain/whisperX"
+
+
+# Python executable with WhisperX installed
+python_executable: python3.11
+
+# Device for processing: 'cuda' for GPU, 'cpu' for CPU
+device: cuda
+
+# Compute type: 'float16' (fastest, GPU), 'int8' (balanced), 'float32' (most accurate, slow)
+compute_type: float16
+
+# Batch size for processing (higher = faster but more VRAM)
+batch_size: 16
+
+# Enable speaker diarization (requires HF_TOKEN in .env)
+enable_diarization: true
+
+# Available models
+models:
+  - name: large-v2
+    context_window:
+      input_tokens: 0   # Not applicable for local models
+      output_tokens: 0  # Not applicable for local models
+    cost_per_1M_tokens_usd:
+      input: 0.0   # Free (local processing)
+      output: 0.0  # Free (local processing)
+  
+  - name: large-v3
+    context_window:
+      input_tokens: 0
+      output_tokens: 0
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0

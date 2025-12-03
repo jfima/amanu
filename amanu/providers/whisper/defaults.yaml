@@ -1,0 +1,42 @@
+# Whisper.cpp Provider Configuration
+# CPU-optimized implementation of OpenAI's Whisper model
+# Requires: whisper.cpp installation (https://github.com/ggerganov/whisper.cpp)
+
+metadata:
+  # Display information
+  display_name: "Whisper"
+  description: "Original OpenAI Whisper. Accurate but slower than X."
+  
+  # Provider characteristics
+  type: "local"
+  cost_indicator: "Free"
+  speed_indicator: "slow"
+  
+  # Capabilities
+  capabilities:
+    - transcription
+  
+  # API configuration
+  api_key:
+    required: false
+  
+  # Documentation
+  docs_url: "https://github.com/ggerganov/whisper.cpp"
+
+
+# Path to whisper.cpp installation directory
+# Set to your actual path or leave as default
+whisper_home: /home/jfima/whisper.cpp
+
+# Available models
+# Models must be downloaded to whisper.cpp/models/ directory
+# Download: cd whisper.cpp && bash ./models/download-ggml-model.sh <model-name>
+models:
+  - name: large-v3
+    path: models/ggml-large-v3.bin  # Relative to whisper_home
+    context_window:
+      input_tokens: 2048   # ~30 seconds of audio
+      output_tokens: 2048
+    cost_per_1M_tokens_usd:
+      input: 0.0   # Free (local processing)
+      output: 0.0  # Free (local processing)

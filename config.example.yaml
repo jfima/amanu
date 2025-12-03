@@ -1,92 +1,114 @@
-# Amanu Configuration
+# Amanu Configuration Example
+# Copy this file to config.yaml and adjust settings as needed.
+# API keys should be stored in .env file (copy .env.example to .env)
+# Model definitions are in amanu/providers/{provider}/defaults.yaml
 
 # --- Stage Configuration ---
-# Define which provider and model to use for each stage.
+# Define which provider and model to use for each processing stage
 transcribe:
-  provider: "gemini" # Options: "gemini", "whisper", "claude"
-  model: "gemini-2.0-flash"
+  provider: gemini           # Provider for transcription: whisperx, whisper, gemini, claude, zai
+  model: gemini-2.0-flash    # Model name (must exist in provider's defaults.yaml)
 
 refine:
-  provider: "gemini" # Options: "gemini" (Claude coming soon)
-  model: "gemini-2.0-flash"
+  provider: gemini           # Provider for refinement: gemini, claude, zai
+  model: gemini-2.0-flash    # Model name (must exist in provider's defaults.yaml)
 
-# --- Provider Configuration ---
+# --- Provider Overrides ---
+# Override default provider settings if needed.
+# Default settings are loaded from amanu/providers/{provider}/defaults.yaml
+# Only specify settings here if you need to override the defaults.
 providers:
-  gemini:
-    api_key: "YOUR_GEMINI_API_KEY" # Or set GEMINI_API_KEY env var
-    models:
-      - name: "gemini-3-pro-preview"
-        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
-        cost_per_1M_tokens_usd: {"input": 2.0, "output": 12.0}
-      - name: "gemini-2.5-pro"
-        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
-        cost_per_1M_tokens_usd: {"input": 1.25, "output": 10.0}
-      - name: "gemini-2.5-flash"
-        context_window: {"input_tokens": 1048576, "output_tokens": 65536}
-        cost_per_1M_tokens_usd: {"input": 0.30, "output": 2.50}
-      - name: "gemini-2.0-flash"
-        context_window: {input_tokens: 1048576, output_tokens: 8192}
-        cost_per_1M_tokens_usd: {input: 0.10, output: 0.40}
+  # WhisperX - Local GPU-accelerated transcription with speaker diarization
+  whisperx:
+    # python_executable: python3.11  # Python executable with WhisperX installed
+    # device: cuda                   # Device: 'cuda', 'cpu'
+    # compute_type: float16          # Compute type: 'float16', 'int8', 'float32'
+    # batch_size: 16                 # Batch size for processing
+    # language: Russian              # Override language (default: auto-detect)
+    # enable_diarization: true       # Enable speaker diarization
+    # HF_TOKEN should be in .env for diarization
 
-  whisper:
-    whisper_home: null  # Optional: Path to whisper.cpp directory (auto-detected if null)
-    models:
-      - name: "tiny"
-        path: "models/ggml-tiny.bin"
-        context_window: {input_tokens: 2048, output_tokens: 2048} # ~10 mins audio
-        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
-      - name: "base"
-        path: "models/ggml-base.bin"
-        context_window: {input_tokens: 2048, output_tokens: 2048}
-        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
-      - name: "small"
-        path: "models/ggml-small.bin"
-        context_window: {input_tokens: 2048, output_tokens: 2048}
-        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
-      - name: "medium"
-        path: "models/ggml-medium.bin"
-        context_window: {input_tokens: 2048, output_tokens: 2048}
-        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
-      - name: "large-v3"
-        path: "models/ggml-large-v3.bin"
-        context_window: {input_tokens: 2048, output_tokens: 2048}
-        cost_per_1M_tokens_usd: {input: 0.0, output: 0.0}
+  # Whisper.cpp - Local CPU-optimized transcription
+  # whisper:
+  #   whisper_home: /path/to/whisper.cpp  # Path to whisper.cpp installation
 
-  claude:
-    api_key: "YOUR_ANTHROPIC_API_KEY" # Or set ANTHROPIC_API_KEY env var
-    models:
-      - name: "claude-3-5-sonnet-20241022"
-        context_window: {input_tokens: 200000, output_tokens: 8192}
-        cost_per_1M_tokens_usd: {input: 3.00, output: 15.00}
+  # Gemini - Google's AI models (API key in .env as GEMINI_API_KEY)
+  # gemini:
+  #   # All settings loaded from amanu/providers/gemini/defaults.yaml
+  #   # See defaults.yaml for available models and their capabilities
+
+  # Claude - Anthropic's AI models (API key in .env as CLAUDE_API_KEY)
+  # claude:
+  #   # All settings loaded from amanu/providers/claude/defaults.yaml
+
+  # Z.AI - Zhipu AI models (API key in .env as ZAI_API_KEY)
+  # zai:
+  #   # All settings loaded from amanu/providers/zai/defaults.yaml
 
 # --- General Settings ---
-debug: false
+debug: false  # Debug mode: true = keep all intermediate files, false = cleanup after processing
 
+# --- Processing Configuration ---
 processing:
-  language: "auto"
-  compression_mode: "compressed" # "original", "compressed", "optimized"
-  shelve_mode: "timeline" # "timeline", "zettelkasten"
+  # Language for processing
+  # Options: 'auto' for auto-detection, or specific language code (e.g., 'Russian', 'English')
+  language: auto
+  
+  # Audio compression mode
+  # Options:
+  #   - 'original': Keep original audio format
+  #   - 'compressed': Convert to OGG Opus (smaller size, good quality)
+  #   - 'optimized': Aggressive compression (smallest size)
+  compression_mode: compressed
+  
+  # Output organization mode
+  # Options:
+  #   - 'timeline': Organize by date/time
+  #   - 'zettelkasten': Organize by topic/tags
+  shelve_mode: timeline
+  
+  # Output artifacts configuration
+  # Define what output files to generate
   output:
     artifacts:
+      # Markdown outputs
       - plugin: markdown
-        template: default
-        filename: "transcript"
+        template: default      # Standard markdown transcript
+        filename: transcript
+      
       - plugin: markdown
-        template: summary
-        filename: "summary"
+        template: concise      # Concise summary
+        filename: summary
+      
+      # PDF output
       - plugin: pdf
-        template: report
+        template: classic      # Classic PDF report
+        filename: report
+      
+      # Subtitle file
       - plugin: srt
-        template: standard
+        template: standard     # Standard SRT subtitles
+        filename: subtitles
+      
+      # Text outputs
       - plugin: txt
-        template: default      # timestamped, script
+        template: default      # Plain text transcript
+        filename: transcript
+      
+      # Other available templates:
+      # - template: script       # Script format (speaker: text)
+      # - template: timestamped  # Timestamped format
 
+# --- Directory Paths ---
+# Paths can be absolute or relative to the project root
 paths:
-  input: "./scribe-in"
-  work: "./scribe-work"
-  results: "./scribe-out"
+  input: ./scribe-in       # Input files directory
+  work: ./scribe-work      # Working directory for intermediate files
+  results: ./scribe-out    # Output directory for final results
 
+# --- Cleanup Configuration ---
+# Automatic cleanup of old jobs from work directory
 cleanup:
-  failed_jobs_retention_days: 7
-  completed_jobs_retention_days: 1
-  auto_cleanup_enabled: true
+  failed_jobs_retention_days: 7      # Days to keep failed jobs
+  completed_jobs_retention_days: 1   # Days to keep completed jobs
+  auto_cleanup_enabled: true         # Enable automatic cleanup

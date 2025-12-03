@@ -15,7 +15,8 @@ class CostReporter:
     def generate_summary(self, days: int = 30) -> Dict[str, Any]:
         """Generate a cost and usage summary for the last N days."""
         cutoff_date = datetime.now() - timedelta(days=days)
-        jobs = self.manager.list_jobs(include_history=True)
+        # Only scan work directory (scribe-work) as per new logic
+        jobs = self.manager.list_jobs(include_history=False)
         
         summary = {
             "period_days": days,
@@ -50,7 +51,7 @@ class CostReporter:
                 summary["jobs_by_status"][status] = summary["jobs_by_status"].get(status, 0) + 1
                 
                 # Model count (Transcribe model as primary)
-                model = meta.configuration.transcribe.name
+                model = meta.configuration.transcribe.model
                 summary["jobs_by_model"][model] = summary["jobs_by_model"].get(model, 0) + 1
                 
             except Exception as e:
