@@ -1,0 +1,91 @@
+metadata:
+  display_name: Ollama
+  description: "Local AI models for text refinement. NOTE: Audio transcription is NOT supported natively!"
+  type: local
+  cost_indicator: Free
+  speed_indicator: medium
+  capabilities:
+  - refinement
+  # NOTE: transcription via spectrogram is experimental and has limited accuracy
+  # Use WhisperX, Gemini, or OpenRouter for reliable audio transcription
+  api_key:
+    required: false
+  docs_url: https://ollama.ai/docs
+  pricing_url: https://ollama.ai/pricing
+
+# Default Ollama server configuration
+base_url: "http://localhost:11434"
+timeout: 600
+auto_pull_models: true
+
+# Available models for different tasks
+# NOTE: Ollama API does NOT support native audio input!
+# Transcription capabilities are limited. Use WhisperX, Gemini, or OpenRouter for audio transcription.
+models:
+  # Multimodal models - can attempt transcription via spectrogram conversion (experimental)
+  - name: llava-llama3:8b
+    display_name: "LLaVA-Llama3 8B (Ollama - Experimental)"
+    type: multimodal
+    context_window:
+      input_tokens: 4096
+      output_tokens: 2048
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "Multimodal model for audio-to-text via spectrograms (experimental, limited accuracy)"
+    
+  - name: bakllava:7b
+    display_name: "BakLLaVA 7B (Ollama - Experimental)"
+    type: multimodal
+    context_window:
+      input_tokens: 2048
+      output_tokens: 1024
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "Compact multimodal model for audio transcription (experimental, limited accuracy)"
+    
+  # Refinement models - for text analysis and improvement
+  - name: gpt-oss:20b
+    display_name: "GPT-OSS 20B (Ollama)"
+    type: refinement
+    context_window:
+      input_tokens: 8192
+      output_tokens: 4096
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "Large language model for text refinement and analysis"
+    
+  - name: llama3.1:8b
+    display_name: "Llama 3.1 8B (Ollama)"
+    type: refinement
+    context_window:
+      input_tokens: 128000
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "Fast and efficient model for text processing"
+    
+  - name: qwen2.5:14b
+    display_name: "Qwen 2.5 14B (Ollama)"
+    type: refinement
+    context_window:
+      input_tokens: 32768
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "Multilingual model with excellent Russian support"
+    
+  - name: llama3.1:70b
+    display_name: "Llama 3.1 70B (Ollama)"
+    type: refinement
+    context_window:
+      input_tokens: 128000
+      output_tokens: 8192
+    cost_per_1M_tokens_usd:
+      input: 0.0
+      output: 0.0
+    description: "High-capability model for complex analysis (requires significant VRAM)"

@@ -31,6 +31,9 @@ class ProviderFactory:
             elif name == "openrouter":
                 from ..providers.openrouter.provider import OpenRouterTranscriptionProvider
                 cls.register("openrouter", OpenRouterTranscriptionProvider)
+            elif name == "ollama":
+                from ..providers.ollama.provider import OllamaTranscriptionProvider
+                cls.register("ollama", OllamaTranscriptionProvider)
             else:
                 raise ValueError(f"Unknown provider: {name}")
         
@@ -53,6 +56,9 @@ class ProviderFactory:
         elif name == "openrouter":
             from ..providers.openrouter.provider import OpenRouterRefinementProvider
             return OpenRouterRefinementProvider
+        elif name == "ollama":
+            from ..providers.ollama.provider import OllamaRefinementProvider
+            return OllamaRefinementProvider
         elif name == "claude":
              # TODO: Implement ClaudeRefinementProvider
              raise NotImplementedError("Claude refinement not yet implemented.")

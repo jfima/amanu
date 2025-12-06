@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 import questionary
+from amanu.providers.openrouter.utils import fetch_openrouter_models
 
 # Initialize Rich Console
 console = Console()
@@ -165,6 +166,26 @@ class ProviderManager:
 
     def get_models(self, provider_name: str) -> List[Dict[str, Any]]:
         return self.providers.get(provider_name, {}).get("models", [])
+
+    def update_provider_models(self, provider_name: str, new_models: List[Dict[str, Any]]):
+        """Updates the models list for a provider and saves to defaults.yaml."""
+        if provider_name not in self.providers:
+            return
+
+        # Update in-memory
+        self.providers[provider_name]["models"] = new_models
+        
+        # Save to file
+        provider_dir = PROVIDERS_DIR / provider_name
+        defaults_path = provider_dir / "defaults.yaml"
+        
+        if defaults_path.exists():
+            try:
+                with open(defaults_path, "w") as f:
+                    yaml.dump(self.providers[provider_name], f, sort_keys=False)
+                console.print(f"[green]Updated models for {provider_name} in {defaults_path}[/green]")
+            except Exception as e:
+                console.print(f"[red]Error saving defaults for {provider_name}: {e}[/red]")
 
 class SetupWizard:
     def __init__(self):
@@ -365,43 +386,136 @@ class SetupWizard:
 
         console.print(table)
         
+        # Validate default provider exists in available choices
+        current_provider = self.config.get("transcribe", {}).get("provider")
+        provider_default = current_provider if current_provider in available_providers else None
+        
         provider = questionary.select(
             "Select Transcription Provider:",
             choices=choices,
-            default=self.config.get("transcribe", {}).get("provider")
+            default=provider_default
         ).ask()
         
         if not provider: return
 
         # 2. Select Model
         models = self.provider_manager.get_models(provider)
-        if not models:
-            console.print(f"[yellow]No models found for {provider}. Using default.[/yellow]")
-            return
-
-        model_table = Table(title=f"Available Models for {provider.capitalize()}", box=box.ROUNDED)
-        model_table.add_column("Model Name", style="cyan")
-        model_table.add_column("Context", style="magenta")
-        model_table.add_column("Input Cost ($/1M)", style="green")
-        model_table.add_column("Output Cost ($/1M)", style="green")
         
-        model_choices = []
-        for m in models:
-            name = m["name"]
-            ctx = f"{m.get('context_window', {}).get('input_tokens', '?')}"
-            cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
-            cost_out = m.get('cost_per_1M_tokens_usd', {}).get('output', 0.0)
+        # Special handling for OpenRouter: allow fetching new models
+        if provider == "openrouter":
+            model_choices = []
+            # Add existing models first
+            for m in models:
+                name = m["name"]
+                cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
+                cost_out = m.get('cost_per_1M_tokens_usd', {}).get('output', 0.0)
+                model_choices.append(questionary.Choice(f"{name} (${cost_in}/{cost_out})", value=name))
             
-            model_table.add_row(name, str(ctx), str(cost_in), str(cost_out))
-            model_choices.append(questionary.Choice(f"{name} (${cost_in}/{cost_out})", value=name))
+            # Add Fetch option
+            model_choices.append(questionary.Choice("[Fetch & Select New Model...]", value="__fetch__"))
+            
+            current_default = self.config.get("transcribe", {}).get("model")
+            if current_default and current_default not in [c.value for c in model_choices]:
+                current_default = None
 
-        console.print(model_table)
-        
-        model = questionary.select(
-            "Select Model:",
-            choices=model_choices,
-            default=self.config.get("transcribe", {}).get("model")
-        ).ask()
+            model = questionary.select(
+                "Select Model:",
+                choices=model_choices,
+                default=current_default
+            ).ask()
+            
+            if model == "__fetch__":
+                # Ensure API Key is available
+                key_info = self.provider_manager.get_api_key_info(provider)
+                api_key = self.env_manager.get(key_info['env_var'])
+                if not api_key:
+                    console.print("[yellow]OpenRouter API Key is required to fetch models.[/yellow]")
+                    api_key = questionary.password("Enter OpenRouter API Key:").ask()
+                    if api_key:
+                        self.env_manager.set(key_info['env_var'], api_key)
+                    else:
+                        return
+
+                console.print("[cyan]Fetching models from OpenRouter...[/cyan]")
+                fetched_models = fetch_openrouter_models(api_key)
+                
+                if not fetched_models:
+                    console.print("[red]Failed to fetch models or no models found.[/red]")
+                    return
+
+                # Let user select from fetched models
+                # For transcription, we ideally want models that support audio, but the API might not indicate this clearly.
+                # We'll show all but warn.
+                
+                # Prepare for autocomplete
+                model_lookup = {}
+                autocomplete_choices = []
+                for m in fetched_models:
+                    name = m["name"]
+                    cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
+                    display_str = f"{name} | ${cost_in}/1M"
+                    model_lookup[display_str] = m
+                    autocomplete_choices.append(display_str)
+                
+                selected_str = questionary.autocomplete(
+                    "Type to search for a model:",
+                    choices=autocomplete_choices,
+                    ignore_case=True,
+                    match_middle=True
+                ).ask()
+                
+                selected_model_data = model_lookup.get(selected_str)
+                
+                if selected_model_data:
+                    # Check if already exists
+                    exists = False
+                    for existing in models:
+                        if existing["name"] == selected_model_data["name"]:
+                            exists = True
+                            break
+                    
+                    if not exists:
+                        # Add type hint - default to multimodal for transcription context if unknown
+                        selected_model_data["type"] = "multimodal" 
+                        models.append(selected_model_data)
+                        self.provider_manager.update_provider_models(provider, models)
+                    
+                    model = selected_model_data["name"]
+                else:
+                    return
+        else:
+            # Standard flow for other providers
+            if not models:
+                console.print(f"[yellow]No models found for {provider}. Using default.[/yellow]")
+                return
+
+            model_table = Table(title=f"Available Models for {provider.capitalize()}", box=box.ROUNDED)
+            model_table.add_column("Model Name", style="cyan")
+            model_table.add_column("Context", style="magenta")
+            model_table.add_column("Input Cost ($/1M)", style="green")
+            model_table.add_column("Output Cost ($/1M)", style="green")
+            
+            model_choices = []
+            for m in models:
+                name = m["name"]
+                ctx = f"{m.get('context_window', {}).get('input_tokens', '?')}"
+                cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
+                cost_out = m.get('cost_per_1M_tokens_usd', {}).get('output', 0.0)
+                
+                model_table.add_row(name, str(ctx), str(cost_in), str(cost_out))
+                model_choices.append(questionary.Choice(f"{name} (${cost_in}/{cost_out})", value=name))
+
+            console.print(model_table)
+            
+            current_default = self.config.get("transcribe", {}).get("model")
+            if current_default and current_default not in [c.value for c in model_choices]:
+                current_default = None
+
+            model = questionary.select(
+                "Select Model:",
+                choices=model_choices,
+                default=current_default
+            ).ask()
 
         self.config["transcribe"] = {"provider": provider, "model": model}
 
@@ -436,23 +550,107 @@ class SetupWizard:
             
         console.print(table)
         
+        # Validate default provider exists in available choices
+        current_provider = self.config.get("refine", {}).get("provider")
+        provider_default = current_provider if current_provider in available_providers else None
+        
         provider = questionary.select(
             "Select Refinement Provider:",
             choices=choices,
-            default=self.config.get("refine", {}).get("provider")
+            default=provider_default
         ).ask()
         
         if not provider: return
 
         # Select Model
         models = self.provider_manager.get_models(provider)
-        model_choices = [questionary.Choice(m["name"], value=m["name"]) for m in models]
         
-        model = questionary.select(
-            "Select Model:",
-            choices=model_choices,
-            default=self.config.get("refine", {}).get("model")
-        ).ask()
+        # Special handling for OpenRouter
+        if provider == "openrouter":
+            model_choices = []
+            for m in models:
+                name = m["name"]
+                cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
+                model_choices.append(questionary.Choice(f"{name} (${cost_in}/1M)", value=name))
+            
+            model_choices.append(questionary.Choice("[Fetch & Select New Model...]", value="__fetch__"))
+            
+            current_default = self.config.get("refine", {}).get("model")
+            if current_default and current_default not in [c.value for c in model_choices]:
+                current_default = None
+
+            model = questionary.select(
+                "Select Model:",
+                choices=model_choices,
+                default=current_default
+            ).ask()
+            
+            if model == "__fetch__":
+                # Ensure API Key
+                key_info = self.provider_manager.get_api_key_info(provider)
+                api_key = self.env_manager.get(key_info['env_var'])
+                if not api_key:
+                    console.print("[yellow]OpenRouter API Key is required to fetch models.[/yellow]")
+                    api_key = questionary.password("Enter OpenRouter API Key:").ask()
+                    if api_key:
+                        self.env_manager.set(key_info['env_var'], api_key)
+                    else:
+                        return
+
+                console.print("[cyan]Fetching models from OpenRouter...[/cyan]")
+                fetched_models = fetch_openrouter_models(api_key)
+                
+                if not fetched_models:
+                    console.print("[red]Failed to fetch models or no models found.[/red]")
+                    return
+
+                # Prepare for autocomplete
+                model_lookup = {}
+                autocomplete_choices = []
+                for m in fetched_models:
+                    name = m["name"]
+                    cost_in = m.get('cost_per_1M_tokens_usd', {}).get('input', 0.0)
+                    display_str = f"{name} | ${cost_in}/1M"
+                    model_lookup[display_str] = m
+                    autocomplete_choices.append(display_str)
+                
+                selected_str = questionary.autocomplete(
+                    "Type to search for a model:",
+                    choices=autocomplete_choices,
+                    ignore_case=True,
+                    match_middle=True
+                ).ask()
+                
+                selected_model_data = model_lookup.get(selected_str)
+                
+                if selected_model_data:
+                    # Check if already exists
+                    exists = False
+                    for existing in models:
+                        if existing["name"] == selected_model_data["name"]:
+                            exists = True
+                            break
+                    
+                    if not exists:
+                        selected_model_data["type"] = "refinement"
+                        models.append(selected_model_data)
+                        self.provider_manager.update_provider_models(provider, models)
+                    
+                    model = selected_model_data["name"]
+                else:
+                    return
+        else:
+            model_choices = [questionary.Choice(m["name"], value=m["name"]) for m in models]
+            
+            current_default = self.config.get("refine", {}).get("model")
+            if current_default and current_default not in [c.value for c in model_choices]:
+                current_default = None
+
+            model = questionary.select(
+                "Select Model:",
+                choices=model_choices,
+                default=current_default
+            ).ask()
         
         self.config["refine"] = {"provider": provider, "model": model}
 

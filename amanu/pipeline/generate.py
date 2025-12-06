@@ -36,9 +36,7 @@ class GenerateStage(BaseStage):
         """
         Generate user artifacts using Plugins.
         """
-        logger.debug(f"Executing GenerateStage. Initial job_dir type: {type(job_dir)}, value: {job_dir}")
         job_dir = Path(job_dir) # Ensure job_dir is a Path object
-        logger.debug(f"job_dir is now type: {type(job_dir)}")
         # Load Enriched Context
         if job.enriched_context_file:
             context_file = job_dir / job.enriched_context_file
@@ -69,6 +67,21 @@ class GenerateStage(BaseStage):
         
         if not context:
             raise FileNotFoundError("No context available for generation. Enriched context and raw transcript are both missing.")
+        
+        # Inject job metadata into context for templates
+        context['_job'] = {
+            'provider_transcribe': job.configuration.transcribe.provider if job.configuration.transcribe else 'N/A',
+            'provider_refine': job.configuration.refine.provider if job.configuration.refine else 'N/A',
+            'model_refine': job.configuration.refine.model if job.configuration.refine else 'N/A',
+            'total_cost_usd': job.processing.total_cost_usd,
+            'total_tokens_input': job.processing.total_tokens.input,
+            'total_tokens_output': job.processing.total_tokens.output,
+            'created_at': job.created_at.strftime("%Y-%m-%d %H:%M") if job.created_at else None,
+        }
+        
+        # Also inject raw_transcript segments for templates that need it
+        if raw_transcript:
+            context['transcript_segments'] = raw_transcript
             
         generated_artifacts = []
 

@@ -8,34 +8,40 @@ from unittest.mock import MagicMock, patch
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from amanu.core.models import JobMeta, JobConfiguration, ModelSpec, ModelContextWindow, PricingModel, ProcessingStats
+from amanu.core.models import JobMeta, JobObject, JobConfiguration, StageConfig, ProcessingStats
 from amanu.core.manager import JobManager
 from amanu.pipeline.scribe import ScribeStage
-from amanu.pipeline.refine import RefineStage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Test")
 
-def create_mock_meta():
-    pricing = PricingModel(input=0.1, output=0.4)
-    context = ModelContextWindow(input_tokens=1000, output_tokens=1000)
-    model_spec = ModelSpec(name="test-model", context_window=context, cost_per_1M_tokens_usd=pricing)
+def create_mock_job_and_meta():
+    stage_config = StageConfig(provider="gemini", model="gemini-1.5-flash")
     
     config = JobConfiguration(
-        template="default",
-        language="en",
-        debug=True,
-        transcribe=model_spec,
-        refine=model_spec
+        transcribe=stage_config,
+        refine=stage_config,
+        debug=True
     )
     
-    return JobMeta(
-        job_id="test_job",
-        original_file="test.mp3",
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        configuration=config
+    job_id = "test_job"
+    timestamp = datetime.now()
+    
+    job = JobObject(
+        job_id=job_id,
+        created_at=timestamp,
+        updated_at=timestamp,
+        configuration=config,
+        current_stage="ingest",
+        ingest_result={"gemini": {"cache_name": "test_cache"}} # Mock ingest result
     )
+    
+    meta = JobMeta(
+        original_file="test.mp3",
+        created_at=timestamp
+    )
+    
+    return job, meta
 
 def test_debug_flag():
     logger.info("Testing Debug Flag...")
@@ -44,103 +50,126 @@ def test_debug_flag():
     # Create dummy job dir
     job_dir = manager.work_dir / "test_job"
     job_dir.mkdir(parents=True, exist_ok=True)
-    (job_dir / "_stages").mkdir(exist_ok=True)
-    (job_dir / "_stages" / "test.txt").write_text("stage data")
     
-    # Mock load_meta to return debug=True
-    meta = create_mock_meta()
-    meta.configuration.debug = True
+    # Create a dummy file that should be kept/pruned
+    (job_dir / "transcripts").mkdir(exist_ok=True)
+    (job_dir / "transcripts" / "test.txt").write_text("transcript data")
     
-    with patch.object(manager, 'load_meta', return_value=meta):
-        with patch.object(manager, '_get_job_dir', return_value=job_dir):
-            results_dir = Path("test_results")
-            if results_dir.exists():
-                shutil.rmtree(results_dir)
+    job, meta = create_mock_job_and_meta()
+    
+    # Test 1: Debug = True (Should keep files)
+    job.configuration.debug = True
+    
+    with patch.object(manager, 'load_job_object', return_value=job):
+        with patch.object(manager, 'load_meta', return_value=meta): 
+            with patch.object(manager, '_get_job_dir', return_value=job_dir):
+                results_dir = Path("test_results")
+                if results_dir.exists():
+                    shutil.rmtree(results_dir)
+                    
+                manager.finalize_job("test_job", results_dir)
                 
-            manager.finalize_job("test_job", results_dir)
-            
-            # Check if _stages exists in results
-            # Results structure: results/YYYY/MM/DD/test_job
-            date_path = meta.created_at.strftime("%Y/%m/%d")
-            result_job_dir = results_dir / date_path / "test_job"
-            
-            if (result_job_dir / "_stages").exists():
-                logger.info("PASS: _stages preserved when debug=True")
-            else:
-                logger.error("FAIL: _stages NOT preserved when debug=True")
+                # Results structure: results/YYYY/MM/DD/test_job
+                date_path = meta.created_at.strftime("%Y/%m/%d")
+                result_job_dir = results_dir / date_path / "test_job"
+                
+                # In finalize, we COPY to results. The original work dir is what gets pruned or not.
+                # Actually manager.finalize_job copies then prunes WORK dir.
+                # We should check if files still exist in JOB DIR (Work dir)
+                
+                # Check WORK dir preservation
+                if (job_dir / "transcripts" / "test.txt").exists():
+                    logger.info("PASS: work files preserved when debug=True")
+                else:
+                    logger.error("FAIL: work files NOT preserved when debug=True")
+
+    # Test 2: Debug = False (Should prune files)
+    job.configuration.debug = False
+    
+    # Re-create file because it might have been moved/deleted? 
+    # finalize_job does copytree then prune.
+    (job_dir / "transcripts").mkdir(exist_ok=True)
+    (job_dir / "transcripts" / "test.txt").write_text("transcript data")
+    
+    with patch.object(manager, 'load_job_object', return_value=job):
+        with patch.object(manager, 'load_meta', return_value=meta):
+             with patch.object(manager, '_get_job_dir', return_value=job_dir):
+                if results_dir.exists():
+                    shutil.rmtree(results_dir)
+                    
+                manager.finalize_job("test_job", results_dir)
+                
+                # Check WORK dir pruning. 
+                # Transcripts folder should be deleted or empty? 
+                # Manager logic: "delete: media, transcripts, artifacts"
+                if not (job_dir / "transcripts").exists():
+                     logger.info("PASS: work files pruned when debug=False")
+                else:
+                     logger.error("FAIL: work files NOT pruned when debug=False")
 
     # Cleanup
     if job_dir.exists():
         shutil.rmtree(job_dir)
     if results_dir.exists():
         shutil.rmtree(results_dir)
+    if manager.work_dir.exists():
+        shutil.rmtree(manager.work_dir)
 
 def test_stats_collection():
     logger.info("Testing Stats Collection...")
     
-    # Mock ScribeStage
+    # Mock Manager
     manager = MagicMock()
+    # Mock provider config
+    manager.providers = {}
+    
     stage = ScribeStage(manager)
     
-    meta = create_mock_meta()
+    job, meta = create_mock_job_and_meta()
     job_dir = Path("test_job_dir")
     
-    # Mock internal methods to avoid real execution
-    stage._configure_gemini = MagicMock()
-    stage._load_prep_result = MagicMock(return_value={"cache_name": "test_cache"})
-    
-    # Mock genai
-    with patch("amanu.pipeline.scribe.genai") as mock_genai:
-        with patch("amanu.pipeline.scribe.caching") as mock_caching:
-            # Setup mocks
-            mock_model = MagicMock()
-            mock_chat = MagicMock()
-            mock_genai.GenerativeModel.from_cached_content.return_value = mock_model
-            mock_model.start_chat.return_value = mock_chat
-            
-            # Mock responses
-            response_1 = MagicMock()
-            response_1.text = "Ready"
-            response_1.usage_metadata.prompt_token_count = 10
-            response_1.usage_metadata.candidates_token_count = 5
-            
-            response_2 = MagicMock()
-            response_2.text = '{"text": "Hello"}'
-            response_2.usage_metadata.prompt_token_count = 20
-            response_2.usage_metadata.candidates_token_count = 10
-            # Make response_2 iterable for the loop
-            response_2.__iter__.return_value = [response_2]
-            
-            mock_chat.send_message.side_effect = [response_1, response_2]
-            
-            # Run execute (will fail at file operations but we check stats before that or mock file ops)
-            # We need to mock file ops
-            with patch("builtins.open", MagicMock()):
-                with patch("pathlib.Path.mkdir", MagicMock()):
-                    # We also need to mock _parse_jsonl to return something valid so it doesn't loop forever
-                    stage._parse_jsonl = MagicMock(return_value=([{"text": "Hello", "end_time": 100.0}], False))
+    # We need to mock ProviderFactory to return a mock provider
+    with patch("amanu.pipeline.scribe.ProviderFactory") as MockFactory:
+        mock_provider = MagicMock()
+        MockFactory.create.return_value = mock_provider
+        
+        # Setup mock result
+        mock_result = {
+            "segments": [{"text": "Hello", "start": 0.0, "end": 1.0}],
+            "tokens": {"input": 100, "output": 50},
+            "cost_usd": 0.05,
+            "analysis": {"language": "en"}
+        }
+        mock_provider.transcribe.return_value = mock_result
+        
+        # Mock file operations to prevent writing to disk
+        with patch("builtins.open", MagicMock()):
+            with patch("pathlib.Path.mkdir", MagicMock()):
+                with patch("json.dump", MagicMock()):
                     
-                    # Set audio duration to match end time to stop loop
-                    meta.audio.duration_seconds = 100.0
-                    
+                    # Run execute
                     try:
-                        stage.execute(job_dir, meta)
+                        result = stage.execute(job_dir, job)
                     except Exception as e:
-                        # It might fail on something else, but let's check stats
-                        logger.warning(f"Execution finished with: {e}")
-                        pass
-                    
-                    # Check stats
-                    if meta.processing.request_count >= 2:
-                        logger.info(f"PASS: request_count = {meta.processing.request_count}")
+                        logger.error(f"Execution failed: {e}")
+                        return
+
+                    # Check stats on JOB object
+                    if job.processing.request_count == 1:
+                        logger.info(f"PASS: request_count incremented")
                     else:
-                        logger.error(f"FAIL: request_count = {meta.processing.request_count}")
+                        logger.error(f"FAIL: request_count mismatch: {job.processing.request_count}")
                         
-                    if len(meta.processing.steps) >= 2:
-                        logger.info(f"PASS: steps recorded = {len(meta.processing.steps)}")
-                        logger.info(f"Step 1: {meta.processing.steps[0]}")
+                    if job.processing.total_tokens.input == 100:
+                        logger.info(f"PASS: input tokens updated")
                     else:
-                        logger.error(f"FAIL: steps recorded = {len(meta.processing.steps)}")
+                        logger.error(f"FAIL: input tokens mismatch")
+                        
+                    steps = job.processing.steps
+                    if len(steps) == 1 and steps[0]["stage"] == "scribe":
+                         logger.info(f"PASS: step recorded")
+                    else:
+                         logger.error(f"FAIL: step not recorded correctly")
 
 if __name__ == "__main__":
     test_debug_flag()

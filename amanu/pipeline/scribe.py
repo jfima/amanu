@@ -21,14 +21,10 @@ class ScribeStage(BaseStage):
         # Check that ingest stage completed successfully
         ingest_result = job.ingest_result
         if not ingest_result:
-            # Try fallback for backward compatibility
-            try:
-                ingest_result = self._load_ingest_result(job_dir)
-            except FileNotFoundError:
-                raise ValueError(
-                    f"Cannot run 'scribe' stage: ingest result not found.\n"
-                    f"Please run 'ingest' stage first."
-                )
+            raise ValueError(
+                f"Cannot run 'scribe' stage: ingest result not found.\n"
+                f"Please run 'ingest' stage first."
+            )
 
     def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
@@ -37,11 +33,7 @@ class ScribeStage(BaseStage):
         # Load ingest result from JobObject
         ingest_result = job.ingest_result
         if not ingest_result:
-             # Fallback for backward compatibility or manual runs
-             try:
-                 ingest_result = self._load_ingest_result(job_dir)
-             except FileNotFoundError:
-                 raise RuntimeError("Ingest result not found in JobObject or file system.")
+            raise RuntimeError("Ingest result not found in JobObject.")
         
         # Initialize Provider
         provider_name = job.configuration.transcribe.provider
@@ -50,7 +42,6 @@ class ScribeStage(BaseStage):
         provider_config = self.manager.providers.get(provider_name)
         if not provider_config:
             logger.warning(f"No configuration found for provider {provider_name}. Using defaults/empty.")
-            pass
 
         provider = ProviderFactory.create(provider_name, job.configuration, provider_config)
         
@@ -75,14 +66,16 @@ class ScribeStage(BaseStage):
         if not merged_transcript:
             raise RuntimeError("Transcription failed: No segments produced.")
 
-        # Update Job Object
+        # Update Job Object and Meta
         analysis = result.get("analysis", {})
         if "language" in analysis:
-            job.audio.language = analysis["language"]
+            meta = self.manager.load_meta(job_dir)
+            meta.audio.language = analysis["language"]
+            self.manager.save_meta(job_dir, meta)
             
         job.raw_transcript_file = str(raw_file.relative_to(job_dir))
             
-        job.processing.request_count += 1 # Abstract count
+        job.processing.request_count += 1
         job.processing.total_tokens.input += result.get("tokens", {}).get("input", 0)
         job.processing.total_tokens.output += result.get("tokens", {}).get("output", 0)
         job.processing.total_cost_usd += result.get("cost_usd", 0.0)
@@ -102,12 +95,3 @@ class ScribeStage(BaseStage):
             "segments_count": len(merged_transcript),
             "cost_usd": result.get("cost_usd", 0.0)
         }
-
-    def _load_ingest_result(self, job_dir: Path) -> Dict[str, Any]:
-        ingest_file = job_dir / "_stages" / "ingest.json"
-        if not ingest_file.exists():
-            raise FileNotFoundError("Ingest stage result not found. Run ingest first.")
-        with open(ingest_file, "r") as f:
-            return json.load(f)
-
-

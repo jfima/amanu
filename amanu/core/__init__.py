@@ -1,5 +1,5 @@
 from .models import (
-    JobState, JobMeta, StageName, StageStatus, 
-    StageState, JobConfiguration, PricingModel
+    JobMeta, StageName, StageStatus, 
+    StageState, JobConfiguration, PricingModel, JobObject
 )
 from .manager import JobManager

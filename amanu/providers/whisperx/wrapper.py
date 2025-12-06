@@ -24,4 +24,12 @@ if hasattr(torch, 'serialization'):
 from whisperx import __main__
 
 if __name__ == '__main__':
-    __main__.cli()
+    try:
+        __main__.cli()
+    finally:
+        # Explicit cleanup to help release VRAM immediately
+        # particularly important when chaining with other GPU-heavy tasks like Ollama
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

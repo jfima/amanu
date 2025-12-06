@@ -2,9 +2,11 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import logging
+import traceback
 
 from ..core.manager import JobManager
 from ..core.models import JobObject, StageName, StageStatus
+from ..core.console import console
 
 logger = logging.getLogger("Amanu.Pipeline")
 
@@ -33,33 +35,25 @@ class BaseStage(ABC):
             result = self.execute(job_dir, job, **kwargs)
             
             # Save updated job object
-            # Note: execute() might have modified job.audio, job.processing, etc.
-            # We also merge any returned result into the job object if needed,
-            # but ideally execute() should update the job object directly.
-            # However, for backward compatibility with my own design, let's assume execute returns a dict
-            # that we might want to log or store.
-            # But in the new architecture, we want to update specific fields in JobObject.
-            
-            # Let's enforce that execute() updates the passed 'job' object.
             self.manager.save_job_object(job_dir, job)
             
             self.manager.update_stage_status(job_id, self.stage_name, StageStatus.COMPLETED)
             logger.info(f"Stage {self.stage_name.value} completed for job {job_id}")
             
         except Exception as e:
-            logger.error(f"Stage {self.stage_name.value} failed for job {job_id}: {e}")
-            # Log traceback if debug is enabled for the job
-            # We need to reload job to check debug flag safely or use cached config
+            error_msg = str(e)
+            logger.error(f"Stage {self.stage_name.value} failed for job {job_id}: {error_msg}")
+            
+            # Log traceback only in verbose/debug mode
             try:
                 job_dir = self.manager._get_job_dir(job_id)
                 job = self.manager.load_job_object(job_dir)
-                if job.configuration.debug:
-                    import traceback
-                    logger.debug("""%s""", traceback.format_exc())
+                if job.configuration.debug or job.configuration.output_mode == "verbose":
+                    logger.debug(traceback.format_exc())
             except:
                 pass
                 
-            self.manager.update_stage_status(job_id, self.stage_name, StageStatus.FAILED, error=str(e))
+            self.manager.update_stage_status(job_id, self.stage_name, StageStatus.FAILED, error=error_msg)
             raise
 
     @abstractmethod
@@ -159,15 +153,9 @@ class Pipeline:
                     continue
 
                 # Reload state in each iteration to get the latest status updates
-                # Try loading JobObject first
                 job_dir = self.job_manager._get_job_dir(job_id)
-                if (job_dir / "_stages" / "_job.json").exists():
-                    job = self.job_manager.load_job_object(job_dir)
-                    current_stage_status = job.stages[current_stage_name].status
-                else:
-                    # Fallback
-                    job_state = self.job_manager.load_state(job_id)
-                    current_stage_status = job_state.stages[current_stage_name].status
+                job = self.job_manager.load_job_object(job_dir)
+                current_stage_status = job.stages[current_stage_name].status
 
                 if current_stage_status == StageStatus.COMPLETED:
                     logger.info(f"Stage {current_stage_name.value} already completed. Skipping.")
@@ -190,11 +178,16 @@ class Pipeline:
                 # If pending or failed, run the stage
                 logger.info(f"Running stage {current_stage_name.value}...")
                 stage_instance = stage_class_map[current_stage_name](self.job_manager)
-                # Pass results_dir to ShelveStage if it's the current stage
-                if current_stage_name == StageName.SHELVE:
-                    stage_instance.run(job_id, results_dir=self.results_dir)
-                else:
-                    stage_instance.run(job_id)
+                
+                # Use console spinner for long-running stages
+                with console.status(f"Processing {current_stage_name.value}..."):
+                    # Pass results_dir to ShelveStage if it's the current stage
+                    if current_stage_name == StageName.SHELVE:
+                        stage_instance.run(job_id, results_dir=self.results_dir)
+                    else:
+                        stage_instance.run(job_id)
+                
+                console.success(f"Stage {current_stage_name.value} completed")
                 
                 # Check if we should stop after this stage
                 if stop_after and current_stage_name == stop_after:
@@ -203,15 +196,30 @@ class Pipeline:
                     return
                     
             except Exception as e:
-                import traceback
-                logger.error(f"Pipeline failed at stage {current_stage_name.value}: {e}\n{traceback.format_exc()}")
+                # Clean error output - no double traceback
+                error_msg = str(e)
+                console.error_panel(
+                    f"Stage: {current_stage_name.value}\n\nError: {error_msg}",
+                    title="Pipeline Failed"
+                )
+                # Verbose mode: output detailed error for AI debugging
+                console.verbose_error(
+                    stage=current_stage_name.value,
+                    error=e,
+                    context={
+                        "job_id": job_id,
+                        "stage": current_stage_name.value,
+                        "stop_after": stop_after.value if stop_after else None
+                    }
+                )
                 raise
 
         # 6. Finalize (only if we didn't stop early)
         # Update total time
         from datetime import datetime
         job = self.job_manager.load_job_object(job_id)
-        job.processing.total_time_seconds = (datetime.now() - job.created_at).total_seconds()
+        meta = self.job_manager.load_meta(job_id)
+        job.processing.total_time_seconds = (datetime.now() - meta.created_at).total_seconds()
         job_dir = self.job_manager._get_job_dir(job_id)
         self.job_manager.save_job_object(job_dir, job)
         

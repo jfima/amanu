@@ -4,10 +4,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from datetime import datetime
 
-import google.generativeai as genai
-from google.generativeai import caching
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
-
 from .base import BaseStage
 from ..core.models import JobObject, StageName
 from ..core.factory import ProviderFactory
@@ -46,11 +42,30 @@ class RefineStage(BaseStage):
         # Additional check for direct mode
         if has_ingest and not has_transcript:
             # Direct mode - check language configuration
-            if job.configuration.language == 'auto' and not job.audio.language:
+            meta = self.manager.load_meta(job_dir)
+            if job.configuration.language == 'auto' and not meta.audio.language:
                 logger.warning(
                     f"Language not specified for direct audio analysis. "
                     f"Consider setting language in configuration or running 'scribe' stage first."
                 )
+
+    def _normalize_array_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Fix nested {type: array, items: [...]} structures returned by AI.
+        Some LLMs interpret the JSON Schema structure literally and return
+        data in that format instead of plain arrays.
+        """
+        for key, value in list(data.items()):
+            if isinstance(value, dict):
+                # Check for {type: "array", items: [...]} pattern
+                if value.get("type") == "array" and "items" in value:
+                    data[key] = value.get("items", [])
+                    logger.debug(f"Normalized nested array field '{key}'")
+                # Also handle variant with nested items
+                elif "items" in value and isinstance(value.get("items"), list):
+                    data[key] = value.get("items", [])
+                    logger.debug(f"Normalized nested items field '{key}'")
+        return data
 
     def execute(self, job_dir: Path, job: JobObject, **kwargs) -> Dict[str, Any]:
         """
@@ -84,15 +99,8 @@ class RefineStage(BaseStage):
             logger.info("Mode: Direct Analysis (Audio Processing)")
             mode = "direct"
             input_data = ingest_result
-        else:
-            # Fallback to file check for ingest
-            ingest_file = job_dir / "_stages" / "ingest.json"
-            if ingest_file.exists():
-                logger.info("Mode: Direct Analysis (Audio Processing) [Fallback]")
-                mode = "direct"
-                with open(ingest_file, "r") as f:
-                    input_data = json.load(f)
-            else:
+            
+            if not input_data:
                 raise FileNotFoundError("No input found. Run Scribe (for Standard) or Ingest (for Direct).")
 
         # Generate Enriched Context
@@ -102,8 +110,9 @@ class RefineStage(BaseStage):
         provider_config = self.manager.providers.get(provider_name)
         provider = ProviderFactory.create_refinement_provider(provider_name, job.configuration, provider_config)
         
-        # Get detected language from JobObject
-        detected_language = job.audio.language
+        # Get detected language from meta
+        meta = self.manager.load_meta(job_dir)
+        detected_language = meta.audio.language
         if detected_language:
             logger.info(f"Using detected language context: {detected_language}")
             
@@ -123,16 +132,40 @@ class RefineStage(BaseStage):
                     logger.info(f"Found custom fields in template '{template_name}': {list(metadata['custom_fields'].keys())}")
                     custom_schema_fields.update(metadata["custom_fields"])
         
+        # Add original file creation date to custom_schema_fields if it exists
+        # meta already loaded above
+        original_file_creation_date = meta.original_file_creation_date
+        
+        if original_file_creation_date:
+            # We add it as a potential field, even if not explicitly requested by a template.
+            # This ensures it's available for AI to consider and for templates to use.
+            custom_schema_fields["file_date"] = {
+                "description": "The creation date of the original file, or the earliest date found in its metadata.",
+                "structure": "string" # Will be formatted as YYYY-MM-DD HH:MM
+            }
+            logger.info(f"Added 'file_date' to custom schema from original file creation date: {original_file_creation_date.strftime('%Y-%m-%d %H:%M')}")
+
         try:
             # Pass detected_language and custom_schema to refine
             result = provider.refine(
-                input_data, 
-                mode, 
+                input_data,
+                mode,
                 language=detected_language,
-                custom_schema=custom_schema_fields
+                custom_schema=custom_schema_fields,
+                job_dir=job_dir
             )
             result_data = result.get("result", {})
             usage = result.get("usage")
+
+            # Normalize array fields - fix AI returning {type: array, items: [...]} instead of plain arrays
+            result_data = self._normalize_array_fields(result_data)
+
+            # If file_date was requested and AI didn't provide it or returned "Unknown", use the one from JobObject
+            if "file_date" in custom_schema_fields and original_file_creation_date:
+                if "file_date" not in result_data or result_data.get("file_date") == "Unknown":
+                    result_data["file_date"] = original_file_creation_date.strftime("%Y-%m-%d %H:%M")
+                    logger.info(f"Injected 'file_date' from JobObject into result_data: {result_data['file_date']}")
+
         except Exception as e:
             logger.error(f"Refinement failed: {e}")
             raise

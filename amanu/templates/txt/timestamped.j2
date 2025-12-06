@@ -1,7 +1,10 @@
 ---
 custom_fields:
   date:
-    description: "The date of the conversation or 'Unknown'."
+    description: "The date of the conversation or 'Unknown'. This will be overridden by file_date if available."
+    structure: "string"
+  file_date:
+    description: "The creation date of the original file, or the earliest date found in its metadata."
     structure: "string"
   participants:
     description: "List of real names of participants identified in the conversation."
@@ -9,7 +12,7 @@ custom_fields:
 ---
 TRANSCRIPT (TIMESTAMPED)
 ================================================================================
-Date: {{ date | default('Unknown') }}
+Date: {{ file_date | default(date | default('Unknown')) }}
 Participants: {{ participants | join(', ') if participants else 'Unknown' }}
 
 --------------------------------------------------------------------------------

@@ -53,8 +53,8 @@ class AudioFileHandler(FileSystemEventHandler):
             logger.info(f"New file detected: {filepath.name}")
             
             # Create job
-            meta = self.job_manager.create_job(filepath, self.config.defaults)
-            logger.info(f"Created job: {meta.job_id}")
+            job = self.job_manager.create_job(filepath, self.config.defaults)
+            logger.info(f"Created job: {job.job_id}")
             
             # Delete source file from input (original is now in work/)
             try:
@@ -65,10 +65,10 @@ class AudioFileHandler(FileSystemEventHandler):
             
             # Run pipeline
             try:
-                self.pipeline.run_all_stages(meta.job_id)
-                logger.info(f"Successfully completed job: {meta.job_id}")
+                self.pipeline.run_all_stages(job.job_id)
+                logger.info(f"Successfully completed job: {job.job_id}")
             except Exception as e:
-                logger.error(f"Pipeline failed for job {meta.job_id}: {e}")
+                logger.error(f"Pipeline failed for job {job.job_id}: {e}")
                 # Job stays in work/ with failed status
                 
         finally:

@@ -47,6 +47,7 @@ providers:
 
 # --- General Settings ---
 debug: false  # Debug mode: true = keep all intermediate files, false = cleanup after processing
+output_mode: standard # Console output: 'standard' (spinners), 'verbose' (tracebacks), 'silent'
 
 # --- Processing Configuration ---
 processing:

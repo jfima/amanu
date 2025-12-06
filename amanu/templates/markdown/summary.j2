@@ -4,7 +4,10 @@ custom_fields:
     description: "A concise executive summary of the transcript."
     structure: "string"
   date:
-    description: "The date of the conversation or 'Unknown'."
+    description: "The date of the conversation or 'Unknown'. This will be overridden by file_date if available."
+    structure: "string"
+  file_date:
+    description: "The creation date of the original file, or the earliest date found in its metadata."
     structure: "string"
   language:
     description: "The primary language of the conversation."
@@ -81,6 +84,6 @@ No participants identified.
 {% endif %}
 
 ## Metadata
-- **Date**: {{ date | default('Unknown') }}
+- **Date**: {{ file_date | default(date | default('Unknown')) }}
 - **Language**: {{ language | default('Unknown') }}
 - **Sentiment**: {{ sentiment | default('Unknown') }}

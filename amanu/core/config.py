@@ -54,7 +54,7 @@ def load_provider_config(provider_name: str, user_provider_config: Dict[str, Any
             config_model = None
             if hasattr(module, "__dict__"):
                 for name, obj in module.__dict__.items():
-                    if name.endswith("Config") and isinstance(obj, type) and issubclass(obj, ProviderConfig):
+                    if name.endswith("Config") and isinstance(obj, type) and issubclass(obj, ProviderConfig) and obj is not ProviderConfig:
                         config_model = obj
                         break
             

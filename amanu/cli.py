@@ -9,6 +9,7 @@ from typing import Optional, List
 from .core.manager import JobManager
 from .core.config import load_config
 from .core.models import StageName, StageStatus
+from .core.console import console
 from .pipeline import IngestStage, ScribeStage, RefineStage, ShelveStage, GenerateStage
 
 # Logger will be initialized after config is loaded
@@ -27,10 +28,11 @@ def main() -> None:
 
 
     # Pipeline Stages
-    ingest_parser = subparsers.add_parser("ingest", help="Prepare audio (Analyze/Compress/Upload) [options: --model, --compression-mode]")
+    ingest_parser = subparsers.add_parser("ingest", help="Prepare audio (Analyze/Compress/Upload) [options: --model, --compression-mode, --stop-after]")
     ingest_parser.add_argument("file", help="Input audio file")
     ingest_parser.add_argument("--model", help="Transcribe model override")
     ingest_parser.add_argument("--compression-mode", choices=["original", "compressed", "optimized"], help="Compression mode: original (no compression), compressed (OGG), optimized (OGG + silence removal)")
+    ingest_parser.add_argument("--stop-after", choices=["ingest", "scribe", "refine", "generate", "shelve"], help="Stop pipeline after specified stage")
     
     scribe_parser = subparsers.add_parser("scribe", help="Transcribe audio")
     scribe_parser.add_argument("file_or_job", nargs="?", help="Job ID, job path, or original audio file path")
@@ -117,10 +119,17 @@ def main() -> None:
                      sys.exit(1)
 
     
-    # Setup logging based on config.debug or --verbose flag
+    # Setup logging and console based on config
     from .utils import setup_logging
     debug_mode = args.verbose or getattr(config_context.defaults, 'debug', False)
-    logger = setup_logging(debug=debug_mode)
+    output_mode = getattr(config_context.defaults, 'output_mode', 'standard')
+    if isinstance(output_mode, str):
+        output_mode = output_mode.strip()
+    
+    # Configure console manager
+    console.configure(output_mode=output_mode, debug=debug_mode)
+    
+    logger = setup_logging(debug=debug_mode, output_mode=output_mode)
 
     # Global exception handler
     def handle_exception(exc_type, exc_value, exc_traceback):
@@ -173,12 +182,20 @@ def main() -> None:
                 config.compression_mode = args.compression_mode
                 
             logger.info(f"Starting job for {file_path.name}...")
-            meta = manager.create_job(file_path, config)
-            logger.info(f"Job created: {meta.job_id}")
+            job = manager.create_job(file_path, config)
+            logger.info(f"Job created: {job.job_id}")
             
-            # Run ingest stage
-            stage = IngestStage(manager)
-            stage.run(meta.job_id)
+            # If --stop-after is provided, run the pipeline up to that stage
+            # Otherwise, just run the ingest stage (backward compatibility)
+            if args.stop_after:
+                stop_after = StageName(args.stop_after)
+                from .pipeline.base import Pipeline
+                pipeline = Pipeline(manager, results_dir=Path(config_context.paths.results))
+                pipeline.run_all_stages(job.job_id, start_at=StageName.INGEST, stop_after=stop_after)
+            else:
+                # Run just the ingest stage (original behavior)
+                stage = IngestStage(manager)
+                stage.run(job.job_id)
             
         elif args.command in ["scribe", "refine", "generate", "shelve"]:
             # Map command to stage
@@ -200,7 +217,7 @@ def main() -> None:
 
             # If generate command, override config
             if args.command == "generate" and (args.output_format or args.template):
-                meta = manager.load_meta(job_id)
+                job_obj = manager.load_job_object(job_id)
                 
                 # Create a new artifact config or modify the first one
                 # For simplicity, let's just create a new one for this ad-hoc generation
@@ -210,8 +227,8 @@ def main() -> None:
                     template=args.template or "default",
                     filename=f"generated_{args.template or 'default'}"
                 )
-                meta.configuration.output.artifacts = [artifact_config]
-                manager.save_meta(job_dir, meta)
+                job_obj.configuration.output.artifacts = [artifact_config]
+                manager.save_job_object(job_dir, job_obj)
                 
             # Determine stop_after
             # If --stop-after is provided, use it.
@@ -261,8 +278,8 @@ def main() -> None:
             from .pipeline.base import Pipeline
             pipeline = Pipeline(manager, results_dir=Path(config_context.paths.results))
             
-            meta = manager.create_job(file_path, config)
-            job_id = meta.job_id
+            job = manager.create_job(file_path, config)
+            job_id = job.job_id
             
             stop_after = StageName(args.stop_after) if args.stop_after else None
             pipeline.run_all_stages(job_id, skip_transcript=args.skip_transcript, stop_after=stop_after)
@@ -296,29 +313,29 @@ def main() -> None:
             
             elif args.jobs_command == "show":
                 try:
-                    state = manager.load_state(args.job_id)
+                    job_obj = manager.load_job_object(args.job_id)
                     meta = manager.load_meta(args.job_id)
                     
                     print(f"\n{'='*60}")
-                    print(f"Job: {state.job_id}")
-                    print(f"Original File: {state.original_file}")
-                    print(f"Created: {state.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                    print(f"Updated: {state.updated_at.strftime('%Y-%m-%d %H:%M:%S')}")
-                    print(f"Current Stage: {state.current_stage}")
+                    print(f"Job: {job_obj.job_id}")
+                    print(f"Original File: {meta.original_file}")
+                    print(f"Created: {meta.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"Updated: {job_obj.updated_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                    print(f"Current Stage: {job_obj.current_stage}")
                     print(f"\nConfiguration:")
-                    print(f"  Language: {meta.configuration.language}")
-                    print(f"  Transcribe Model: {meta.configuration.transcribe.name}")
-                    print(f"  Refine Model: {meta.configuration.refine.name}")
+                    print(f"  Language: {job_obj.configuration.language}")
+                    print(f"  Transcribe Model: {job_obj.configuration.transcribe.model}")
+                    print(f"  Refine Model: {job_obj.configuration.refine.model}")
                     print(f"\nStages:")
-                    for stage, s_state in state.stages.items():
+                    for stage, s_state in job_obj.stages.items():
                         status_icon = "✓" if s_state.status == StageStatus.COMPLETED else "✗" if s_state.status == StageStatus.FAILED else "○"
                         print(f"  [{status_icon}] {stage.value:<10} {s_state.status.value}")
                         if s_state.error:
                             print(f"      Error: {s_state.error}")
                     
-                    if state.errors:
+                    if job_obj.errors:
                         print(f"\nErrors:")
-                        for err in state.errors:
+                        for err in job_obj.errors:
                             print(f"  - [{err['timestamp']}] {err['stage']}: {err['error']}")
                     print(f"{'='*60}\n")
                     
@@ -427,7 +444,7 @@ def _resolve_job(manager: JobManager, job_arg: Optional[str], stage: StageName) 
     if job_arg:
         # Check if it's a valid job directory
         p = Path(job_arg)
-        if p.is_dir() and (p / "_stages" / "_job.json").exists():
+        if p.is_dir() and (p / "_job.json").exists():
             return p
             
         # Check if it's a path to a file

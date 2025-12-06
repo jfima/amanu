@@ -6,6 +6,7 @@ import anthropic
 
 from ...core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
 from ...core.models import JobConfiguration
+from ...core.logger import APILogger
 from . import ZaiConfig
 
 logger = logging.getLogger("Amanu.Plugin.Zai")
@@ -27,6 +28,9 @@ class ZaiProvider(TranscriptionProvider):
         )
 
     def transcribe(self, ingest_result: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
+        
         local_file_path = ingest_result.get("local_file_path")
         if not local_file_path:
             raise ValueError("No local file path found in Ingest result for Zai.")
@@ -34,10 +38,22 @@ class ZaiProvider(TranscriptionProvider):
         logger.info(f"Transcribing {local_file_path} with Zhipu AI...")
 
         with open(local_file_path, "rb") as audio_file:
-            response = self.client.audio.transcriptions.create(
-                model=self.config.transcribe.model or "glm-4.5-air",
-                file=audio_file,
-            )
+            if api_logger:
+                api_logger.log("zai", "audio.transcriptions.create", {"model": self.config.transcribe.model or "glm-4.5-air", "file": str(local_file_path)}, "PENDING")
+            
+            try:
+                response = self.client.audio.transcriptions.create(
+                    model=self.config.transcribe.model or "glm-4.5-air",
+                    file=audio_file,
+                )
+                
+                if api_logger:
+                    api_logger.log("zai", "audio.transcriptions.create", {"model": self.config.transcribe.model or "glm-4.5-air"}, response.model_dump() if hasattr(response, 'model_dump') else str(response))
+                    
+            except Exception as e:
+                if api_logger:
+                    api_logger.log("zai", "audio.transcriptions.create", {"model": self.config.transcribe.model or "glm-4.5-air"}, None, error=str(e))
+                raise
 
         full_text = response.text
         segments = []
@@ -136,6 +152,8 @@ Please format your response in a clear, structured way that can be easily parsed
         """Refine and analyze transcribed text with custom fields support."""
         language = kwargs.get("language")
         custom_schema = kwargs.get("custom_schema", {})
+        job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
 
         # Extract text content
         text_content = self._extract_text_from_input(input_data, mode)
@@ -163,9 +181,9 @@ Please format your response in a clear, structured way that can be easily parsed
         try:
             # Try Claude-compatible endpoint first if available
             if self.claude_client:
-                return self._refine_with_claude(text_content, language, custom_schema)
+                return self._refine_with_claude(text_content, language, custom_schema, api_logger)
             else:
-                return self._refine_with_zhipu(text_content, language, custom_schema)
+                return self._refine_with_zhipu(text_content, language, custom_schema, api_logger)
         except Exception as e:
             logger.error(f"Refinement failed: {e}")
             # Try the other method as fallback
@@ -173,7 +191,7 @@ Please format your response in a clear, structured way that can be easily parsed
             try:
                 if self.claude_client:
                     logger.info("Falling back to ZhipuAI native API...")
-                    return self._refine_with_zhipu(text_content, language, custom_schema)
+                    return self._refine_with_zhipu(text_content, language, custom_schema, api_logger)
                 else:
                     # We tried zhipu (because claude was None), failed.
                     # We cannot try claude because it is None.
@@ -183,18 +201,25 @@ Please format your response in a clear, structured way that can be easily parsed
                 logger.error(f"Fallback also failed: {fallback_error}")
                 raise
 
-    def _refine_with_claude(self, text_content: str, language: Optional[str], custom_schema: Dict) -> Dict[str, Any]:
+    def _refine_with_claude(self, text_content: str, language: Optional[str], custom_schema: Dict, api_logger: Optional[APILogger] = None) -> Dict[str, Any]:
         """Use Claude-compatible endpoint for refinement."""
         prompt = self._build_refinement_prompt(text_content, language, custom_schema)
+        model = self.config.refine.model or "claude-3-haiku-20240307"
 
         try:
+            if api_logger:
+                api_logger.log("zai_claude", "messages.create", {"model": model, "prompt": prompt}, "PENDING")
+                
             response = self.claude_client.messages.create(
-                model=self.config.refine.model or "claude-3-haiku-20240307",
+                model=model,
                 max_tokens=3000,
                 messages=[
                     {"role": "user", "content": prompt}
                 ]
             )
+            
+            if api_logger:
+                api_logger.log("zai_claude", "messages.create", {"model": model}, response.model_dump() if hasattr(response, 'model_dump') else str(response))
 
             content = response.content[0].text if response.content else ""
 
@@ -210,21 +235,30 @@ Please format your response in a clear, structured way that can be easily parsed
             }
 
         except Exception as e:
+            if api_logger:
+                api_logger.log("zai_claude", "messages.create", {"model": model}, None, error=str(e))
             logger.error(f"Claude-compatible refinement failed: {e}")
             raise
 
-    def _refine_with_zhipu(self, text_content: str, language: Optional[str], custom_schema: Dict) -> Dict[str, Any]:
+    def _refine_with_zhipu(self, text_content: str, language: Optional[str], custom_schema: Dict, api_logger: Optional[APILogger] = None) -> Dict[str, Any]:
         """Use Zhipu native API for refinement."""
         prompt = self._build_refinement_prompt(text_content, language, custom_schema)
+        model = self.config.refine.model or "glm-4"
 
         try:
+            if api_logger:
+                api_logger.log("zai_native", "chat.completions.create", {"model": model, "prompt": prompt}, "PENDING")
+                
             response = self.zhipu_client.chat.completions.create(
-                model=self.config.refine.model or "glm-4",
+                model=model,
                 messages=[
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=3000
             )
+            
+            if api_logger:
+                api_logger.log("zai_native", "chat.completions.create", {"model": model}, response.model_dump() if hasattr(response, 'model_dump') else str(response))
 
             content = response.choices[0].message.content if response.choices else ""
 
@@ -240,6 +274,8 @@ Please format your response in a clear, structured way that can be easily parsed
             }
 
         except Exception as e:
+            if api_logger:
+                api_logger.log("zai_native", "chat.completions.create", {"model": model}, None, error=str(e))
             logger.error(f"Zhipu refinement failed: {e}")
             raise
 

@@ -4,7 +4,10 @@ custom_fields:
     description: "A concise executive summary of the transcript."
     structure: "string"
   date:
-    description: "The date of the conversation or 'Unknown'."
+    description: "The date of the conversation or 'Unknown'. This will be overridden by file_date if available."
+    structure: "string"
+  file_date:
+    description: "The creation date of the original file, or the earliest date found in its metadata."
     structure: "string"
   participants:
     description: "List of real names of participants identified in the conversation."
@@ -24,7 +27,7 @@ custom_fields:
 ---
 # The Story of the Conversation
 
-*Recorded on {{ date | default('a recent day') }}*
+*Recorded on {{ file_date | default(date | default('a recent day')) }}*
 
 ## The Gist
 {{ summary }}

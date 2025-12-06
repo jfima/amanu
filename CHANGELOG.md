@@ -5,6 +5,40 @@ All notable changes to Amanu will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2025-12-06
+
+### 🧹 Cleanup & Robustness
+
+This release focuses on hardening the application by removing legacy code, improving resource management (VRAM), and fixing critical issues in provider integrations.
+
+### Added
+- **VRAM Management**: Implemented robust GPU resource release for WhisperX to prevent conflicts with Ollama.
+- **WhisperX Enhancements**:
+  - Added support for `--hf_token` via `config.yaml` or environment variables.
+  - Implemented dynamic confidence score calculation.
+- **Ollama Reliability**:
+  - Added retry logic for malformed JSON responses in refinement.
+  - Improved error propagation for silent failures.
+- **Job Metadata**: Added detailed job stats (cost, tokens, model info) to the final Markdown output.
+- **Text Logs**: API logs are now saved as readable text files instead of JSON.
+
+### Changed
+- **Unified State**: specific `JobObject` is now the single source of truth.
+  - Removed legacy `JobState` model.
+  - Removed `state.json` and `meta.json` support.
+  - Removed support for old `_stages` directory structure.
+- **Output Template**: Improved formatting for quotes and action items in Markdown reports.
+
+### Fixed
+- **Ollama**:
+  - Fixed `base_url` `AttributeError` in refinement.
+  - Fixed audio file passing for transcription models ("forgot to provide audio file" error).
+- **OpenRouter**:
+  - Fixed `prompt_token_count` `AttributeError` by correctly accessing usage dictionary.
+- **General**: Fixed empty `enriched_context.json` issues when LLMs return invalid JSON.
+
+---
+
 ## [1.6.0] - 2025-12-03
 
 ### 🚀 Major Provider System Refactor

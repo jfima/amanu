@@ -11,6 +11,7 @@ from google.api_core import exceptions
 
 from ...core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
 from ...core.models import JobConfiguration
+from ...core.logger import APILogger
 from . import GeminiConfig
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
@@ -41,6 +42,8 @@ class GeminiProvider(TranscriptionProvider):
 
     def transcribe(self, ingest_result: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
+        
         gemini_data = ingest_result.get("gemini", {})
         cache_name = gemini_data.get("cache_name")
         file_name = gemini_data.get("file_name")
@@ -136,7 +139,7 @@ Instructions:
 
             try:
                 logger.info(f"--- SENDING PROMPT (Turn {turn_count}) ---\n{prompt}\n------------------------------------------")
-                response = self._send_with_retry(chat, prompt, timeout=self.config.scribe.timeout, generation_config=generation_config)
+                response = self._send_with_retry(chat, prompt, timeout=self.config.scribe.timeout, generation_config=generation_config, api_logger=api_logger)
                 turn_text = ""
                 for chunk in response:
                     if chunk.parts: turn_text += chunk.text
@@ -187,6 +190,23 @@ Instructions:
                      total_input_tokens += usage.prompt_token_count
                      total_output_tokens += usage.candidates_token_count
                 
+                # Loop detection: Check if timestamps reset significantly
+                if lines and merged_transcript:
+                    # Get end time of the last segment BEFORE this turn
+                    last_segment_end = merged_transcript[-len(lines)-1].get("end_time", 0.0) if len(merged_transcript) > len(lines) else 0.0
+                    
+                    # Get start time of the first segment of THIS turn
+                    current_start = lines[0].get("start_time", 0.0)
+                    
+                    # If current start is significantly less than last end (e.g. < 50%), it's likely a restart
+                    # We use a loose threshold because timestamps can be messy
+                    if last_segment_end > 1.0 and current_start < last_segment_end * 0.5:
+                        logger.warning(f"Detected potential loop/restart (Time reset: {last_segment_end} -> {current_start}). Stopping transcription.")
+                        is_complete = True
+                        # Remove the duplicate lines we just added
+                        merged_transcript = merged_transcript[:-len(lines)]
+                        break
+
                 if found_end_token:
                      is_complete = True
                 elif is_truncated:
@@ -203,7 +223,11 @@ Output strictly JSONL format."""
                      is_complete = True
 
                 else:
-                     prompt = "Continue transcription. Output strictly JSONL arrays. Do not repeat the last segment."
+                     prompt = """You stopped without outputting [END].
+If you have finished the entire audio, output [END] immediately.
+If there is more audio, continue transcription from the last timestamp.
+Do NOT restart from the beginning.
+Output strictly JSONL format."""
                      
             except Exception as e:
                 logger.error(f"Error in turn {turn_count}: {e}")
@@ -221,22 +245,42 @@ Output strictly JSONL format."""
             "analysis": analysis
         }
 
-    def _send_with_retry(self, chat, prompt: str, timeout: int = 600, generation_config: Optional[Dict] = None):
+    def _send_with_retry(self, chat, prompt: str, timeout: int = 600, generation_config: Optional[Dict] = None, api_logger: Optional[APILogger] = None):
         max_retries = self.config.scribe.retry_max
         delay = self.config.scribe.retry_delay_seconds
         
         for attempt in range(max_retries + 1):
             try:
-                return chat.send_message(prompt, stream=True, request_options={'timeout': timeout}, generation_config=generation_config)
+                response = chat.send_message(prompt, stream=True, request_options={'timeout': timeout}, generation_config=generation_config)
+                
+                # Consume stream to get text and usage for logging
+                # Note: Consuming the stream here means we can't consume it again outside?
+                # Actually, response is an iterator. If we iterate it here, we exhaust it.
+                # But we return 'response' which is the iterator.
+                # Wait, if I iterate here to log, I can't return it for the caller to iterate.
+                # I should gather the response parts here, log, and then return a new iterator or the gathered parts.
+                # Or, simpler: Just log the request here, and log the response in the caller after consumption.
+                # But the caller consumes it chunk by chunk.
+                # Let's log the REQUEST here. The caller logs the RESPONSE text.
+                
+                if api_logger:
+                    api_logger.log("gemini", "chat.send_message", prompt, "STREAM_RESPONSE")
+                    
+                return response
+                
             except exceptions.ResourceExhausted:
                 if attempt < max_retries:
                     logger.warning(f"Resource exhausted (429). Retrying in {delay}s (Attempt {attempt + 1}/{max_retries})...")
                     time.sleep(delay)
                 else:
                     logger.error(f"Resource exhausted (429) after {max_retries} retries.")
+                    if api_logger:
+                         api_logger.log("gemini", "chat.send_message", prompt, None, error="ResourceExhausted")
                     raise
             except Exception as e:
                 logger.error(f"Error sending message: {e}")
+                if api_logger:
+                     api_logger.log("gemini", "chat.send_message", prompt, None, error=str(e))
                 raise
 
     def _parse_jsonl(self, text: str):
@@ -311,13 +355,15 @@ class GeminiRefinementProvider(RefinementProvider):
     def refine(self, input_data: Any, mode: str, language: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         model_name = self.config.refine.model
         custom_schema = kwargs.get("custom_schema")
+        job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
         
         if mode == "standard":
-            return self._process_text(input_data, model_name, language, custom_schema)
+            return self._process_text(input_data, model_name, language, custom_schema, api_logger)
         else:
-            return self._process_audio(input_data, model_name, language, custom_schema)
+            return self._process_audio(input_data, model_name, language, custom_schema, api_logger)
 
-    def _process_text(self, transcript: list, model_name: str, language: Optional[str] = None, custom_schema: Dict = None):
+    def _process_text(self, transcript: list, model_name: str, language: Optional[str] = None, custom_schema: Dict = None, api_logger: Optional[APILogger] = None):
         # Optimize transcript for prompt: use compact list of lists [Speaker, Text]
         # Timestamps are generally not needed for high-level refinement/summary
         optimized_transcript = []
@@ -384,9 +430,9 @@ INSTRUCTIONS:
 OUTPUT SCHEMA (JSON):
 {schema_str}
 """
-        return self._generate_content(model_name, prompt)
+        return self._generate_content(model_name, prompt, api_logger)
 
-    def _process_audio(self, ingest_data: Dict, model_name: str, language: Optional[str] = None, custom_schema: Dict = None):
+    def _process_audio(self, ingest_data: Dict, model_name: str, language: Optional[str] = None, custom_schema: Dict = None, api_logger: Optional[APILogger] = None):
         gemini_data = ingest_data.get("gemini", {})
         cache_name = gemini_data.get("cache_name")
         file_name = gemini_data.get("file_name")
@@ -412,12 +458,6 @@ OUTPUT SCHEMA (JSON):
             # Default language when not specified
             target_language = 'en'
             logger.warning(f"Language not specified, using default: {target_language}")
-        # Base Schema - Minimal default if no custom schema provided
-        # If custom_schema is provided, we assume it covers everything needed, 
-        # OR we should merge it with a minimal set of "always good to have" fields?
-        # The user said: "ask the model ONLY for such data that will be needed in the used templates".
-        # So we should start with an empty schema and populate it.
-        # BUT, if no templates are used (or templates without frontmatter), we need a fallback.
         
         output_schema = {}
         custom_instructions = ""
@@ -431,8 +471,6 @@ OUTPUT SCHEMA (JSON):
                  custom_instructions += f"   - **{field}**: {desc}\n"
         else:
              # Fallback to default schema if no custom fields defined
-             # This ensures backward compatibility for templates that haven't been updated yet
-             # or if the user isn't using templates with frontmatter.
              output_schema = {
                 "summary": "string (concise summary)",
                 "key_takeaways": ["string"],
@@ -464,15 +502,15 @@ OUTPUT SCHEMA (JSON):
 {schema_str}
 """
         if cache_name:
-             return self._generate_content_with_model(model, prompt)
+             return self._generate_content_with_model(model, prompt, api_logger)
         else:
-             return self._generate_content_with_model(model, [file_obj, prompt])
+             return self._generate_content_with_model(model, [file_obj, prompt], api_logger)
 
-    def _generate_content(self, model_name: str, prompt: Any):
+    def _generate_content(self, model_name: str, prompt: Any, api_logger: Optional[APILogger] = None):
         model = genai.GenerativeModel(model_name)
-        return self._generate_content_with_model(model, prompt)
+        return self._generate_content_with_model(model, prompt, api_logger)
 
-    def _generate_content_with_model(self, model, prompt):
+    def _generate_content_with_model(self, model, prompt, api_logger: Optional[APILogger] = None):
         # Log prompt
         log_prompt = prompt
         if isinstance(prompt, list):
@@ -485,17 +523,27 @@ OUTPUT SCHEMA (JSON):
             "response_mime_type": "application/json"
         }
         
-        response = model.generate_content(
-            prompt,
-            generation_config=generation_config,
-            safety_settings={
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-        )
-        
+        try:
+            response = model.generate_content(
+                prompt,
+                generation_config=generation_config,
+                safety_settings={
+                    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+                }
+            )
+            
+            if api_logger:
+                api_logger.log("gemini", "generate_content", log_prompt, response.text)
+                
+        except Exception as e:
+            logger.error(f"Error generating content: {e}")
+            if api_logger:
+                 api_logger.log("gemini", "generate_content", log_prompt, None, error=str(e))
+            raise
+
         try:
             logger.info(f"--- RECEIVED REFINEMENT RESPONSE ---\n{response.text}\n------------------------------------")
         except Exception as e:
@@ -506,8 +554,19 @@ OUTPUT SCHEMA (JSON):
              result_data = json.loads(response.text)
              if isinstance(result_data, list):
                  result_data = result_data[0] if result_data else {}
-        except Exception:
-             result_data = {}
+        except json.JSONDecodeError as e:
+            # Log the error details
+            logger.error(f"Failed to parse JSON response from Gemini model")
+            logger.error(f"Response text (first 500 chars): {response.text[:500]}")
+            logger.debug(f"Full response: {response.text}")
+            logger.debug(f"JSON decode error: {e}")
+            
+            # Raise a proper exception so it's recorded in _job.json
+            raise ValueError(
+                f"Gemini model returned invalid JSON response. "
+                f"JSON parse error: {e}. "
+                f"Response preview: {response.text[:200]}..."
+            )
 
         return {
             "result": result_data,

@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import subprocess
+import time
 from typing import Dict, Any, List
 from pathlib import Path
 
@@ -138,7 +139,32 @@ class WhisperXProvider(TranscriptionProvider):
             # /usr/lib/wsl/lib is critical for WSL2 CUDA support
             env['LD_LIBRARY_PATH'] = f"/usr/lib/wsl/lib:/usr/lib/x86_64-linux-gnu:{current_ld_path}"
             
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+            # Use Popen instead of run to stream output in real-time
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                bufsize=1  # Line buffered
+            )
+            
+            # Stream output
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    if line:
+                        logger.debug(f"[WhisperX] {line.strip()}")
+            
+            # Wait for completion
+            return_code = process.wait()
+            
+            if return_code != 0:
+                stderr_output = process.stderr.read() if process.stderr else "No stderr captured"
+                raise subprocess.CalledProcessError(return_code, cmd, stderr=stderr_output)
+            
+            # Give GPU time to fully release memory after WhisperX process ends
+            # This prevents memory conflicts when Ollama loads in the next pipeline stage
+            time.sleep(5)
             
             # The tool creates a file named <audio_filename>.json
             # Note: whisperx might change the filename slightly, usually it's just name.json
@@ -152,17 +178,25 @@ class WhisperXProvider(TranscriptionProvider):
             with open(json_output_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            # Clean up
-            # os.remove(json_output_path) # Keep it for debugging for now? Or maybe remove.
+            # Clean up temporary file to avoid confusion with raw_transcript.json
+            os.remove(json_output_path)
             
             results = []
             for segment in data.get('segments', []):
+                # Calculate confidence from word-level scores if available
+                words = segment.get('words', [])
+                if words:
+                    word_scores = [w.get('score', 1.0) for w in words if 'score' in w]
+                    confidence = sum(word_scores) / len(word_scores) if word_scores else 1.0
+                else:
+                    confidence = 1.0
+                    
                 results.append({
                     "speaker_id": segment.get("speaker", "Unknown"),
                     "start_time": round(segment['start'], 3),
                     "end_time": round(segment['end'], 3),
                     "text": segment['text'].strip(),
-                    "confidence": 1.0 # WhisperX doesn't always give per-segment confidence in simple json
+                    "confidence": round(confidence, 4)
                 })
                 
             return results

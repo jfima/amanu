@@ -50,8 +50,21 @@ class IngestStage(BaseStage):
         # 2. Analyze Audio (Scout Logic)
         logger.info(f"Analyzing {original_file.name}...")
         audio_meta = self._analyze_audio(original_file)
-        job.audio = audio_meta
         
+        # Load meta to update audio metadata and check/update original file creation date
+        meta = self.manager.load_meta(job_dir)
+        meta.audio = audio_meta
+        
+        if audio_meta.creation_date and (
+            not meta.original_file_creation_date or
+            audio_meta.creation_date < meta.original_file_creation_date
+        ):
+            meta.original_file_creation_date = audio_meta.creation_date
+            logger.info(f"Updated job creation date from audio metadata: {meta.original_file_creation_date}")
+        
+        # Save updated meta
+        self.manager.save_meta(job_dir, meta)
+
         # Estimate tokens (conservative 15 tokens/sec for output limit check)
         estimated_output_tokens = int(audio_meta.duration_seconds * 15)
         
@@ -149,34 +162,36 @@ class IngestStage(BaseStage):
         return result_data
 
     def _analyze_audio(self, filepath: Path) -> AudioMeta:
-        """Get audio details using ffprobe."""
+        """Get audio details and metadata using ffprobe."""
         try:
-            # Get duration
-            cmd_duration = [
-                'ffprobe', '-v', 'error',
-                '-show_entries', 'format=duration',
-                '-of', 'default=noprint_wrappers=1:nokey=1',
-                str(filepath)
-            ]
-            result_dur = subprocess.run(cmd_duration, capture_output=True, text=True, check=True)
-            duration = float(result_dur.stdout.strip()) if result_dur.stdout.strip() else 0.0
-
-            # Get format and bitrate
+            # Get duration, format, bitrate, size, and creation_time from metadata
             cmd_info = [
                 'ffprobe', '-v', 'error',
-                '-show_entries', 'format=format_name,bit_rate,size',
+                '-show_entries', 'format=duration,format_name,bit_rate,size:stream=codec_type:format_tags=creation_time',
                 '-of', 'json',
                 str(filepath)
             ]
             result_info = subprocess.run(cmd_info, capture_output=True, text=True, check=True)
             info = json.loads(result_info.stdout)
-            fmt = info['format']
+            fmt = info.get('format', {})
             
+            duration = float(fmt.get('duration', 0.0))
+            
+            # Get creation time from metadata
+            creation_time_str = fmt.get('tags', {}).get('creation_time')
+            metadata_creation_date: Optional[datetime] = None
+            if creation_time_str:
+                try:
+                    metadata_creation_date = datetime.fromisoformat(creation_time_str.replace('Z', '+00:00'))
+                except ValueError:
+                    logger.warning(f"Could not parse creation_time from metadata: {creation_time_str}")
+
             return AudioMeta(
                 duration_seconds=duration,
                 format=fmt.get('format_name'),
                 bitrate=int(fmt.get('bit_rate', 0)),
-                file_size_bytes=int(fmt.get('size', 0))
+                file_size_bytes=int(fmt.get('size', 0)),
+                creation_date=metadata_creation_date # Store metadata creation date
             )
         except subprocess.CalledProcessError as e:
             logger.error(f"FFprobe command failed: {e.stderr}")

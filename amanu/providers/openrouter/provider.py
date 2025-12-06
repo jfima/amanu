@@ -10,6 +10,7 @@ from openai import OpenAI
 
 from ...core.providers import TranscriptionProvider, IngestSpecs, RefinementProvider
 from ...core.models import JobConfiguration
+from ...core.logger import APILogger
 from . import OpenRouterConfig
 
 logger = logging.getLogger("Amanu.Plugin.OpenRouter")
@@ -49,6 +50,9 @@ class OpenRouterTranscriptionProvider(TranscriptionProvider):
     
     def transcribe(self, ingest_result: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Transcribe audio using OpenRouter models."""
+        job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
+        
         local_file_path = ingest_result.get("local_file_path")
         if not local_file_path:
             raise ValueError("No local file path found in Ingest result for OpenRouter.")
@@ -58,59 +62,86 @@ class OpenRouterTranscriptionProvider(TranscriptionProvider):
         
         # Determine if this is a Whisper model or multimodal chat model
         if "whisper" in model_name.lower():
-            return self._transcribe_with_whisper(local_file_path, model_name, **kwargs)
+            return self._transcribe_with_whisper(local_file_path, model_name, api_logger, **kwargs)
         else:
-            return self._transcribe_with_chat(local_file_path, model_name, **kwargs)
+            return self._transcribe_with_chat(local_file_path, model_name, api_logger, **kwargs)
     
-    def _transcribe_with_whisper(self, audio_path: str, model_name: str, **kwargs) -> Dict[str, Any]:
+    def _transcribe_with_whisper(self, audio_path: str, model_name: str, api_logger: Optional[APILogger] = None, **kwargs) -> Dict[str, Any]:
         """Transcribe using Whisper-style audio transcriptions endpoint."""
         logger.info(f"Using Whisper API endpoint for {model_name}")
         
-        try:
-            with open(audio_path, "rb") as audio_file:
-                response = self.client.audio.transcriptions.create(
-                    model=model_name,
-                    file=audio_file,
-                    response_format="verbose_json"
-                )
-            
-            # Extract segments from Whisper response
-            segments = []
-            if hasattr(response, 'segments') and response.segments:
-                for seg in response.segments:
+        # Implement retry logic for rate limiting (429 errors)
+        max_retries = 3
+        base_delay = 5  # Base delay in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Transcribing with Whisper API: {model_name} (attempt {attempt + 1}/{max_retries})")
+                
+                with open(audio_path, "rb") as audio_file:
+                    if api_logger:
+                        api_logger.log("openrouter", "audio.transcriptions.create", {"model": model_name, "file": str(audio_path)}, "PENDING")
+                        
+                    response = self.client.audio.transcriptions.create(
+                        model=model_name,
+                        file=audio_file,
+                        response_format="verbose_json"
+                    )
+                    
+                    if api_logger:
+                        api_logger.log("openrouter", "audio.transcriptions.create", {"model": model_name, "file": str(audio_path)}, response)
+                
+                # Extract segments from Whisper response
+                segments = []
+                if hasattr(response, 'segments') and response.segments:
+                    for seg in response.segments:
+                        segments.append({
+                            "speaker_id": "Speaker A",
+                            "start_time": seg.get('start', 0.0),
+                            "end_time": seg.get('end', 0.0),
+                            "text": seg.get('text', ''),
+                            "confidence": 1.0
+                        })
+                elif hasattr(response, 'text'):
+                    # Fallback: single segment with full text
                     segments.append({
                         "speaker_id": "Speaker A",
-                        "start_time": seg.get('start', 0.0),
-                        "end_time": seg.get('end', 0.0),
-                        "text": seg.get('text', ''),
+                        "start_time": 0.0,
+                        "end_time": 0.0,
+                        "text": response.text,
                         "confidence": 1.0
                     })
-            elif hasattr(response, 'text'):
-                # Fallback: single segment with full text
-                segments.append({
-                    "speaker_id": "Speaker A",
-                    "start_time": 0.0,
-                    "end_time": 0.0,
-                    "text": response.text,
-                    "confidence": 1.0
-                })
+                
+                # Get cost from generation endpoint
+                generation_id = getattr(response, 'id', None)
+                cost = self._get_generation_cost(generation_id) if generation_id else 0.0
+                
+                return {
+                    "segments": segments,
+                    "tokens": {"input": 0, "output": 0},
+                    "cost_usd": cost,
+                    "analysis": {"language": getattr(response, 'language', 'auto')}
+                }
             
-            # Get cost from generation endpoint
-            generation_id = getattr(response, 'id', None)
-            cost = self._get_generation_cost(generation_id) if generation_id else 0.0
-            
-            return {
-                "segments": segments,
-                "tokens": {"input": 0, "output": 0},
-                "cost_usd": cost,
-                "analysis": {"language": getattr(response, 'language', 'auto')}
-            }
-        
-        except Exception as e:
-            logger.error(f"Whisper transcription failed: {e}")
-            raise
+            except Exception as e:
+                error_msg = str(e)
+                if api_logger:
+                     api_logger.log("openrouter", "audio.transcriptions.create", {"model": model_name}, None, error=error_msg)
+                
+                # Check if this is a rate limit error (429)
+                if "429" in error_msg and attempt < max_retries - 1:
+                    # Calculate exponential backoff delay
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Rate limit hit (429). Retrying in {delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    logger.debug(f"Error details: {error_msg}")
+                    time.sleep(delay)
+                    continue
+                
+                # If we've exhausted retries or it's a different error, raise the exception
+                logger.error(f"Whisper transcription failed after {attempt + 1} attempts: {e}")
+                raise
     
-    def _transcribe_with_chat(self, audio_path: str, model_name: str, **kwargs) -> Dict[str, Any]:
+    def _transcribe_with_chat(self, audio_path: str, model_name: str, api_logger: Optional[APILogger] = None, **kwargs) -> Dict[str, Any]:
         """Transcribe using multimodal chat completions with audio input."""
         logger.info(f"Using Chat Completions API for multimodal model: {model_name}")
         
@@ -152,59 +183,103 @@ Instructions:
 """
         
         # Make API call with audio in messages
-        try:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": prompt
-                        },
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": audio_base64,
-                                "format": audio_format
+        # Implement retry logic for rate limiting (429 errors)
+        max_retries = 3
+        base_delay = 5  # Base delay in seconds
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Transcribing with OpenRouter model: {model_name} (attempt {attempt + 1}/{max_retries})")
+                
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": prompt
+                            },
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": audio_base64,
+                                    "format": audio_format
+                                }
                             }
+                        ]
+                    }
+                ]
+                
+                # Log request (without base64 data)
+                if api_logger:
+                    log_messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "input_audio", "input_audio": {"data": "<BASE64_AUDIO>", "format": audio_format}}
+                            ]
                         }
                     ]
+                    api_logger.log("openrouter", "chat.completions.create", {"model": model_name, "messages": log_messages}, "PENDING")
+
+                response = self.client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=0.1
+                )
+                
+                if api_logger:
+                    api_logger.log("openrouter", "chat.completions.create", {"model": model_name}, response.model_dump())
+
+                # Extract response text
+                response_text = response.choices[0].message.content if response.choices else ""
+                
+                # Parse JSONL response
+                segments, analysis = self._parse_jsonl_response(response_text)
+                
+                # Get usage and cost
+                usage = response.usage if hasattr(response, 'usage') else None
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                
+                # Try to get cost from usage first (if usage accounting is enabled)
+                cost = 0.0
+                if usage and hasattr(usage, 'cost'):
+                    cost = float(usage.cost)
+                    logger.info(f"Retrieved cost from response.usage: ${cost:.6f}")
+                else:
+                    # Fallback: Get cost from generation endpoint
+                    generation_id = getattr(response, 'id', None)
+                    if generation_id:
+                        cost = self._get_generation_cost(generation_id)
+                
+                logger.info(f"Transcription complete: {len(segments)} segments, {input_tokens} input tokens, {output_tokens} output tokens, ${cost:.6f}")
+                
+                return {
+                    "segments": segments,
+                    "tokens": {"input": input_tokens, "output": output_tokens},
+                    "cost_usd": cost,
+                    "analysis": analysis
                 }
-            ]
             
-            response = self.client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=0.1
-            )
-            
-            # Extract response text
-            response_text = response.choices[0].message.content if response.choices else ""
-            
-            # Parse JSONL response
-            segments, analysis = self._parse_jsonl_response(response_text)
-            
-            # Get usage and cost
-            usage = response.usage if hasattr(response, 'usage') else None
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            
-            # Get cost from generation endpoint
-            generation_id = getattr(response, 'id', None)
-            cost = self._get_generation_cost(generation_id) if generation_id else 0.0
-            
-            logger.info(f"Transcription complete: {len(segments)} segments, {input_tokens} input tokens, {output_tokens} output tokens, ${cost:.6f}")
-            
-            return {
-                "segments": segments,
-                "tokens": {"input": input_tokens, "output": output_tokens},
-                "cost_usd": cost,
-                "analysis": analysis
-            }
-        
-        except Exception as e:
-            logger.error(f"Chat-based transcription failed: {e}")
-            raise
+            except Exception as e:
+                error_msg = str(e)
+                if api_logger:
+                     api_logger.log("openrouter", "chat.completions.create", {"model": model_name}, None, error=error_msg)
+                
+                # Check if this is a rate limit error (429)
+                if "429" in error_msg and attempt < max_retries - 1:
+                    # Calculate exponential backoff delay
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Rate limit hit (429). Retrying in {delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    logger.debug(f"Error details: {error_msg}")
+                    time.sleep(delay)
+                    continue
+                
+                # If we've exhausted retries or it's a different error, raise the exception
+                logger.error(f"Chat-based transcription failed after {attempt + 1} attempts: {e}")
+                raise
     
     def _parse_jsonl_response(self, text: str) -> tuple[List[Dict], Dict]:
         """Parse JSONL response from the model."""
@@ -249,8 +324,12 @@ Instructions:
         
         return segments, analysis
     
-    def _get_generation_cost(self, generation_id: str) -> float:
-        """Fetch the actual cost of a generation from OpenRouter API."""
+    def _get_generation_cost(self, generation_id: str, max_retries: int = 2) -> float:
+        """Fetch the actual cost of a generation from OpenRouter API.
+        
+        Note: OpenRouter may need a few seconds to process generation data,
+        so we retry with delays if we get 404.
+        """
         if not generation_id:
             return 0.0
         
@@ -264,23 +343,37 @@ Instructions:
                 "Authorization": f"Bearer {api_key}"
             }
             
-            response = requests.get(
-                f"https://openrouter.ai/api/v1/generation?id={generation_id}",
-                headers=headers,
-                timeout=10
-            )
+            # Retry logic for 404 errors (generation data may not be immediately available)
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    # Wait before retry (generation data might be processing)
+                    time.sleep(1.0)
+                    logger.debug(f"Retrying cost retrieval for {generation_id} (attempt {attempt + 1}/{max_retries})")
+                
+                response = requests.get(
+                    f"https://openrouter.ai/api/v1/generation?id={generation_id}",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    cost = data.get("data", {}).get("total_cost", 0.0)
+                    logger.info(f"Retrieved cost for generation {generation_id}: ${cost:.6f}")
+                    return cost
+                elif response.status_code == 404 and attempt < max_retries - 1:
+                    # 404 might be temporary, retry
+                    continue
+                else:
+                    logger.debug(f"Cost retrieval response ({response.status_code}): {response.text[:200]}")
+                    break
             
-            if response.status_code == 200:
-                data = response.json()
-                cost = data.get("data", {}).get("total_cost", 0.0)
-                logger.info(f"Retrieved cost for generation {generation_id}: ${cost:.6f}")
-                return cost
-            else:
-                logger.warning(f"Failed to retrieve cost for generation {generation_id}: {response.status_code}")
-                return 0.0
+            # If we get here, all retries failed
+            logger.debug(f"Could not retrieve cost for generation {generation_id} after {max_retries} attempts (this is normal for free models)")
+            return 0.0
         
         except Exception as e:
-            logger.warning(f"Error retrieving generation cost: {e}")
+            logger.debug(f"Error retrieving generation cost: {e}")
             return 0.0
 
 
@@ -311,6 +404,9 @@ class OpenRouterRefinementProvider(RefinementProvider):
     
     def refine(self, input_data: Any, mode: str, language: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Refine and analyze transcribed text."""
+        job_dir = kwargs.get("job_dir")
+        api_logger = APILogger(job_dir) if job_dir else None
+        
         model_name = self.config.refine.model or "google/gemini-2.0-flash-lite-001"
         custom_schema = kwargs.get("custom_schema", {})
         
@@ -386,56 +482,115 @@ OUTPUT SCHEMA (JSON):
 {schema_str}
 """
         
-        try:
-            logger.info(f"Refining with OpenRouter model: {model_name}")
-            
-            response = self.client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
-            
-            # Extract response
-            response_text = response.choices[0].message.content if response.choices else "{}"
-            
-            # Parse JSON response
-            try:
-                result_data = json.loads(response_text)
-                if isinstance(result_data, list):
-                    result_data = result_data[0] if result_data else {}
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse JSON response: {response_text[:500]}")
-                result_data = {}
-            
-            # Get usage and cost
-            usage = response.usage if hasattr(response, 'usage') else None
-            input_tokens = usage.prompt_tokens if usage else 0
-            output_tokens = usage.completion_tokens if usage else 0
-            
-            # Get cost from generation endpoint
-            generation_id = getattr(response, 'id', None)
-            cost = self._get_generation_cost(generation_id) if generation_id else 0.0
-            
-            logger.info(f"Refinement complete: {input_tokens} input tokens, {output_tokens} output tokens, ${cost:.6f}")
-            
-            return {
-                "result": result_data,
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "cost_usd": cost
-                }
-            }
+        # Implement retry logic for rate limiting (429 errors)
+        max_retries = 3
+        base_delay = 5  # Base delay in seconds
         
-        except Exception as e:
-            logger.error(f"Refinement failed: {e}")
-            raise
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Refining with OpenRouter model: {model_name} (attempt {attempt + 1}/{max_retries})")
+                
+                if api_logger:
+                    api_logger.log("openrouter", "chat.completions.create", {"model": model_name, "prompt": prompt}, "PENDING")
+
+                response = self.client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    response_format={"type": "json_object"}
+                )
+                
+                if api_logger:
+                    api_logger.log("openrouter", "chat.completions.create", {"model": model_name}, response.model_dump())
+
+                # Extract response
+                response_text = response.choices[0].message.content if response.choices else "{}"
+                
+                # Parse JSON response
+                # Handle markdown code blocks (```json ... ```)
+                try:
+                    # Strip markdown code blocks if present
+                    text_to_parse = response_text.strip()
+                    if text_to_parse.startswith("```"):
+                        # Find the first newline after opening ```
+                        first_newline = text_to_parse.find('\n')
+                        if first_newline != -1:
+                            # Find the closing ```
+                            closing_marker = text_to_parse.rfind("```")
+                            if closing_marker != -1 and closing_marker > first_newline:
+                                # Extract content between markers
+                                text_to_parse = text_to_parse[first_newline + 1:closing_marker].strip()
+                    
+                    result_data = json.loads(text_to_parse)
+                    if isinstance(result_data, list):
+                        result_data = result_data[0] if result_data else {}
+                except json.JSONDecodeError as e:
+                    # Log the error details
+                    logger.error(f"Failed to parse JSON response from model '{model_name}'")
+                    logger.error(f"Response text (first 500 chars): {response_text[:500]}")
+                    logger.debug(f"Full response: {response_text}")
+                    logger.debug(f"JSON decode error: {e}")
+                    
+                    # Raise a proper exception so it's recorded in _job.json
+                    raise ValueError(
+                        f"Model '{model_name}' returned invalid JSON response. "
+                        f"JSON parse error: {e}. "
+                        f"Response preview: {response_text[:200]}..."
+                    )
+                
+                # Get usage and cost
+                usage = response.usage if hasattr(response, 'usage') else None
+                input_tokens = usage.prompt_tokens if usage else 0
+                output_tokens = usage.completion_tokens if usage else 0
+                
+                # Try to get cost from usage first (if usage accounting is enabled)
+                cost = 0.0
+                if usage and hasattr(usage, 'cost'):
+                    cost = float(usage.cost)
+                    logger.info(f"Retrieved cost from response.usage: ${cost:.6f}")
+                else:
+                    # Fallback: Get cost from generation endpoint
+                    generation_id = getattr(response, 'id', None)
+                    if generation_id:
+                        cost = self._get_generation_cost(generation_id)
+                
+                logger.info(f"Refinement complete: {input_tokens} input tokens, {output_tokens} output tokens, ${cost:.6f}")
+                
+                return {
+                    "result": result_data,
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cost_usd": cost
+                    }
+                }
+            
+            except Exception as e:
+                error_msg = str(e)
+                if api_logger:
+                     api_logger.log("openrouter", "chat.completions.create", {"model": model_name}, None, error=error_msg)
+                
+                # Check if this is a rate limit error (429)
+                if "429" in error_msg and attempt < max_retries - 1:
+                    # Calculate exponential backoff delay
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Rate limit hit (429). Retrying in {delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    logger.debug(f"Error details: {error_msg}")
+                    time.sleep(delay)
+                    continue
+                
+                # If we've exhausted retries or it's a different error, raise the exception
+                logger.error(f"Refinement failed after {attempt + 1} attempts: {e}")
+                raise
     
-    def _get_generation_cost(self, generation_id: str) -> float:
-        """Fetch the actual cost of a generation from OpenRouter API."""
+    def _get_generation_cost(self, generation_id: str, max_retries: int = 2) -> float:
+        """Fetch the actual cost of a generation from OpenRouter API.
+        
+        Note: OpenRouter may need a few seconds to process generation data,
+        so we retry with delays if we get 404.
+        """
         if not generation_id:
             return 0.0
         
@@ -449,21 +604,35 @@ OUTPUT SCHEMA (JSON):
                 "Authorization": f"Bearer {api_key}"
             }
             
-            response = requests.get(
-                f"https://openrouter.ai/api/v1/generation?id={generation_id}",
-                headers=headers,
-                timeout=10
-            )
+            # Retry logic for 404 errors (generation data may not be immediately available)
+            for attempt in range(max_retries):
+                if attempt > 0:
+                    # Wait before retry (generation data might be processing)
+                    time.sleep(1.0)
+                    logger.debug(f"Retrying cost retrieval for {generation_id} (attempt {attempt + 1}/{max_retries})")
+                
+                response = requests.get(
+                    f"https://openrouter.ai/api/v1/generation?id={generation_id}",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    cost = data.get("data", {}).get("total_cost", 0.0)
+                    logger.info(f"Retrieved cost for generation {generation_id}: ${cost:.6f}")
+                    return cost
+                elif response.status_code == 404 and attempt < max_retries - 1:
+                    # 404 might be temporary, retry
+                    continue
+                else:
+                    logger.debug(f"Cost retrieval response ({response.status_code}): {response.text[:200]}")
+                    break
             
-            if response.status_code == 200:
-                data = response.json()
-                cost = data.get("data", {}).get("total_cost", 0.0)
-                logger.info(f"Retrieved cost for generation {generation_id}: ${cost:.6f}")
-                return cost
-            else:
-                logger.warning(f"Failed to retrieve cost for generation {generation_id}: {response.status_code}")
-                return 0.0
+            # If we get here, all retries failed
+            logger.debug(f"Could not retrieve cost for generation {generation_id} after {max_retries} attempts (this is normal for free models)")
+            return 0.0
         
         except Exception as e:
-            logger.warning(f"Error retrieving generation cost: {e}")
+            logger.debug(f"Error retrieving generation cost: {e}")
             return 0.0

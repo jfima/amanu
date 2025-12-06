@@ -1,0 +1,61 @@
+# Example configuration for Ollama provider
+# Copy this to config.yaml and customize as needed
+
+# Transcription configuration using Ollama
+transcribe:
+  provider: ollama
+  model: whisper-large-v3-turbo  # or whisper-large-v3 for higher accuracy
+
+# Refinement configuration using Ollama  
+refine:
+  provider: ollama
+  model: gpt-oss:20b  # or llama3.1:8b for faster processing
+
+# Provider-specific settings
+providers:
+  ollama:
+    # Ollama server configuration
+    base_url: "http://host.docker.internal:11434"
+    timeout: 600
+    auto_pull_models: true
+    
+    # GPU settings (optimized for 24GB VRAM)
+    use_gpu: true
+    gpu_memory_limit: 24000  # 24GB in MB
+    preferred_quantization: "q4_0"
+    
+    # Retry settings
+    max_retries: 3
+    retry_delay: 5
+    
+    # Default models (can be overridden in transcribe/refine sections)
+    transcription_model: "whisper-large-v3-turbo"
+    refinement_model: "gpt-oss:20b"
+
+# General settings
+debug: true
+processing:
+  language: auto  # or specify: Russian, English, etc.
+  compression_mode: compressed
+
+# Output configuration
+output:
+  artifacts:
+    - plugin: markdown
+      template: default
+      filename: default
+    - plugin: txt
+      template: default
+      filename: default
+
+# Paths configuration
+paths:
+  input: ./scribe-in
+  work: ./scribe-work
+  results: ./scribe-out
+
+# Cleanup settings
+cleanup:
+  failed_jobs_retention_days: 7
+  completed_jobs_retention_days: 1
+  auto_cleanup_enabled: true
