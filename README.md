@@ -14,226 +14,156 @@ In ancient times, scholars and leaders employed amanuenses to transcribe their s
 
 Amanu brings this timeless practice into the AI age. It's not just a transcription tool—it's a complete pipeline that transforms your voice into polished, structured documents.
 
----
-
-## 🏗️ Architecture Philosophy
-
-### Modular Provider System
-
-Amanu is built on a **flexible provider architecture**. Each AI provider lives in its own directory under `amanu/providers/`:
-
-```
-amanu/providers/
-├── gemini/          # Google's multimodal AI
-├── openrouter/      # Access to 100+ models
-├── whisper/         # Local Whisper.cpp
-├── whisperx/        # Enhanced local transcription
-├── claude/          # Anthropic's Claude
-└── zai/             # Z.AI provider
-```
-
-**Key principles:**
-- **Plug-and-play**: Add or remove providers by simply adding/deleting folders
-- **Self-contained**: Each provider has its own `defaults.yaml` with model configurations
-- **Discoverable**: Providers are automatically discovered and registered
-- **Extensible**: Easy to add new providers following the base interface
-
-### The Pipeline: Four Stages
-
-Amanu processes audio through **four distinct stages**, each with a clear purpose:
-
-#### 1. **Ingest** — Preparation
-- Converts audio to optimized formats (OGG/Opus) to save bandwidth
-- Uploads large files to provider caches (e.g., Gemini Cache)
-- Prepares metadata and job tracking
-
-#### 2. **Scribe** — Verbatim Transcription
-- Produces word-for-word transcription with timestamps
-- Identifies speakers automatically
-- Can be skipped if you only need summaries
-
-#### 3. **Refine** — Analysis & Enrichment
-- Extracts summaries, action items, key insights
-- Enriches content with structure and details
-- Uses transcript or direct audio analysis
-
-#### 4. **Shelve** — Archival
-- Organizes finished documents into your library
-- Supports timeline (by date) or Zettelkasten (flat) organization
-- Generates multiple output formats (Markdown, PDF, SRT, TXT)
+### Built for "Big Data" Audio
+Amanu is specifically engineered to handle **massive audio files** (talks, lectures, day-long recordings) that break other tools. It features robust resumption, caching, and state management, so you never lose progress on a 3-hour transcription.
 
 ---
 
-## 🚀 Quick Start
+## ✨ Key Features
 
-### 1. Install
+- **🔒 Fully Local & Free**: Use **WhisperX** (transcription) + **Ollama** (refinement) for a completely offline, $0 cost privacy-focused stack.
+- **🎙️ Extreme Compatibility**: Handles MP3, WAV, MP4, M4A, and massive files with ease.
+- **🏗️ Robust Pipeline**: specialized stages for ingestion, transcription, refinement, and generation.
+- **🤖 Multi-Provider**: Switch seamlessy between **Gemini**, **OpenRouter**, **Claude**, **WhisperX**, and **Ollama**.
+- **📊 Detailed Reporting**: Track every token and cent with `amanu report`.
+- **🔌 Automation Ready**: Designed with future **n8n** integration in mind for automated workflows.
 
-```bash
-pip install -e .
-```
+---
 
-### 2. Configure with the Wizard
+## 🚀 Installation & Setup
 
-Amanu includes an **interactive setup wizard** that guides you through configuration:
+### Prerequisites
+- **Python 3.10+**
+- **FFmpeg** (Required for audio processing)
+  - Ubuntu: `sudo apt install ffmpeg`
+  - MacOS: `brew install ffmpeg`
+  - Windows: `winget install ffmpeg`
+- **Git**
 
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/jfima/amanu.git
+   cd amanu
+   ```
+
+2. **Create a virtual environment** (Recommended):
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # on Windows: .venv\Scripts\activate
+   ```
+
+3. **Install Amanu**:
+   ```bash
+   pip install -e .
+   ```
+
+4. **Verify Installation**:
+   ```bash
+   amanu --version
+   ```
+
+---
+
+## ⚙️ Configuration
+
+Amanu includes an **interactive setup wizard** that guides you through configuration, API keys, and model selection.
+
+### 1. Run the Wizard
 ```bash
 amanu setup
 ```
 
-The wizard helps you:
-- 🔑 Configure API keys for your chosen providers
-- 🤖 Select models for transcription and refinement
-- 🌍 Set language preferences
-- 📁 Choose output formats and organization modes
+The wizard will help you:
+- 🔑 **Configure Providers**: Enter API keys (stored safely in `.env`) or set up local models.
+- 🤖 **Select Models**: Choose the best models for Transcription and Refinement to fit your budget and quality needs.
+- 🌍 **Set Defaults**: Configure language and output preferences.
 
-**Everything is configurable** through the wizard—no manual YAML editing required!
+### 2. The "Fully Local" Stack (Optional)
+To use Amanu without any API costs or data leaving your machine:
+1.  **Install WhisperX** (see `amanu/providers/whisperx/README.md` if needed).
+2.  **Pull an Ollama Model**: `ollama pull llama3` (or any other model).
+3.  Run `amanu setup` and select **WhisperX** for transcription and **Ollama** for refinement.
 
-### 3. Process Your First File
+---
 
+## 🏗️ Architecture
+
+Amanu processes audio through a robust **5-stage pipeline**:
+
+### 1. **Ingest**
+- Converts audio to optimized formats (OGG/Opus).
+- Uploads large files to provider caches (e.g., Gemini Cache).
+- Prepares job metadata and safeguards original files.
+
+### 2. **Scribe**
+- Produces word-for-word transcription with timestamps.
+- **WhisperX** / **Gemini** / **Whisper.cpp**  supported.
+- Automatic speaker identification.
+
+### 3. **Refine**
+- Analyzing the text for meaning and structure.
+- Extracts summaries, action items, and key insights using LLMs.
+- Outputs pure data (JSON) for the next stage.
+
+### 4. **Generate**
+- Applies templates to the refined data to create user-facing artifacts.
+- Outputs **Markdown** reports, **PDF** documents, **SRT** subtitles, and more.
+
+### 5. **Shelve**
+- Organizes finished documents into your library.
+- Supports Timeline (date-based) or Zettelkasten (flat) sorting.
+
+---
+
+## 🔌 Providers
+
+Amanu is built on a modular "Provider" system. Providers are automatically discovered from the `amanu/providers/` directory.
+
+| Provider | Type | Description | Cost |
+|----------|------|-------------|------|
+| **Gemini** | Cloud | Excellent multimodal capabilities, huge context window. | $$ |
+| **OpenRouter** | Cloud | Access to 100+ top-tier models (GPT-4, Claude 3, etc.). | Varies |
+| **WhisperX** | Local | State-of-the-art local transcription with alignment. | **Free** |
+| **Ollama** | Local | Run powerful LLMs locally for refinement. | **Free** |
+| **Claude** | Cloud | Anthropic's models, great for complex reasoning. | $$$ |
+
+---
+
+## 🛠️ Usage
+
+### Basic Run
+Process a file through the full pipeline:
 ```bash
-amanu run your-audio.mp3
+amanu run interview.mp3
 ```
 
-Find your results in `scribe-out/`.
+### Direct Analysis (Skip Transcription)
+If you already have a transcript or text file:
+```bash
+amanu run meeting_notes.txt --skip-transcript
+```
 
----
-
-## 🔌 Provider Philosophy
-
-### Flexibility First
-
-Amanu supports multiple AI providers, each with different strengths:
-
-| Provider | Type | Best For | Cost |
-|----------|------|----------|------|
-| **Gemini** | Cloud | Large context, multimodal | $$ |
-| **OpenRouter** | Cloud | Access to 100+ models | Varies |
-| **Whisper** | Local | Privacy, free transcription | Free |
-| **WhisperX** | Local | Enhanced local transcription | Free |
-| **Claude** | Cloud | Advanced reasoning | $$$ |
-| **Z.AI** | Cloud | Alternative cloud option | $$ |
-
-### Easy Provider Management
-
-**New providers** are added regularly. To use them:
-1. Ensure the provider folder exists in `amanu/providers/`
-2. Run `amanu setup` to configure API keys
-3. Select the provider in your `config.yaml`
-
-**Remove providers** you don't need by simply deleting their folders.
-
----
-
-## 📊 Token Usage & Cost Tracking
-
-Amanu tracks **every token** processed and provides detailed cost reports:
-
+### Reporting
+See exactly what you're spending:
 ```bash
 amanu report --days 30
-```
-
-This shows:
-- 📈 Total tokens processed (input/output)
-- 💰 Estimated costs per provider
-- 📅 Usage breakdown by date
-- 🎯 Cost per job
-
-**Why this matters**: You always know exactly how much you're spending on AI processing.
-
----
-
-## 🛠️ Advanced Usage
-
-### Watch Mode (Auto-Process)
-```bash
-amanu watch
-```
-Drop files into `scribe-in/`, get results in `scribe-out/`
-
-### Job Management
-```bash
-amanu jobs list              # See all jobs
-amanu jobs show <job_id>     # Inspect details
-amanu jobs retry <job_id>    # Retry failed jobs
-```
-
-### Stage-by-Stage Execution
-```bash
-amanu run audio.mp3 --stage ingest    # Only prepare
-amanu run audio.mp3 --stage scribe    # Only transcribe
-amanu run audio.mp3 --stage refine    # Only analyze
-amanu run audio.mp3 --stage shelve    # Only archive
 ```
 
 ---
 
 ## 📖 Documentation
 
-**📑 [Documentation Index](./docs/INDEX.md)** - Complete guide to all documentation
-
-### Quick Start Guides
-- [Windows 11 Setup](./docs/getting-started-windows.md)
-- [macOS Setup](./docs/getting-started-macos.md)
-
-### User Guides
-- [Core Features](./docs/features.md)
-- [Configuration Guide](./docs/configuration.md)
-- [Usage Guide](./docs/usage_guide.md)
-- [OpenRouter Quick Start](./docs/openrouter_quickstart.md)
-- [Template System](./docs/template_system_design.md)
-
-### Developer Docs
-- [Architecture Report](./docs/architecture_report.md)
-- [Adding New Providers](./docs/adding_new_providers.md)
-- [Partial Pipeline Execution](./docs/partial_pipeline_execution.md)
-
----
-
-## ✨ Key Features
-
-- **🎙️ Multi-Format Support**: MP3, WAV, MP4, M4A, and more
-- **📝 Rich Outputs**: Markdown, PDF, SRT subtitles, plain text
-- **🗣️ Speaker Detection**: Automatic speaker identification
-- **🌐 Multi-Language**: Auto-detect or force specific languages
-- **💰 Cost Tracking**: Detailed token usage and cost reports
-- **⚡ Watch Mode**: Auto-process files in a folder
-- **🔧 Wizard Configuration**: Easy setup without manual editing
-- **🔌 Modular Providers**: Add/remove providers as needed
-
----
-
-## 💰 Pricing Examples
-
-Costs vary by provider. Here's Gemini pricing:
-
-| Model | Cost | Best For |
-|-------|------|----------|
-| Gemini 2.0 Flash Lite | $0.0375/1M input | Cheapest option |
-| Gemini 2.5 Flash | $0.075/1M input | Balanced quality |
-| Gemini 2.5 Pro | $1.25/1M input | Professional work |
-
-**Example**: 1-hour audio ≈ $0.01-0.05 (depending on model)
-
-Use `amanu report` to track your actual spending.
+- **📑 [Documentation Index](./docs/INDEX.md)**
+- **[Installation Guide](./docs/install_guide.md)**
+- **[Configuration Guide](./docs/configuration.md)**
+- **[Adding New Providers](./docs/adding_new_providers.md)**
 
 ---
 
 ## 🤝 Contributing
-
-Contributions welcome! See our [Contributing Guide](./CONTRIBUTING.md).
-
----
+Contributions are welcome! See our [Contributing Guide](./CONTRIBUTING.md).
 
 ## 📄 License
-
 MIT License - see [LICENSE](./LICENSE) for details.
-
----
-
-## 🙏 Built With
-
-- [Google Gemini](https://ai.google.dev/) - Multimodal AI
-- [OpenRouter](https://openrouter.ai/) - Multi-model access
-- [Whisper](https://github.com/openai/whisper) - Local transcription
-- [Rich](https://rich.readthedocs.io/) - Beautiful terminal UI
-- [FFmpeg](https://ffmpeg.org/) - Audio processing
